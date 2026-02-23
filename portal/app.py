@@ -18,6 +18,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from agents.browser_agent import BrowserAutomationAgent
 from agents.orchestrator import PriorAuthOrchestrator
+from agents.retrieval_agent import PayerPolicyRetrievalAgent
 from agents.types import WorkflowTraceStep
 from knowledge_base.setup_kb import bootstrap_local_policy_store
 
@@ -78,6 +79,7 @@ def _summarize_run(
         "submission_status": submission.get("status"),
         "submission_reference": submission.get("reference"),
         "browser_mode": result.get("browser_mode"),
+        "retrieval_source": result.get("retrieval_source"),
         "duration_ms": _trace_duration_ms(trace),
         "trace_steps": len(trace),
         "error": error,
@@ -112,7 +114,11 @@ def _execute_workflow(
 ) -> dict[str, Any]:
     bootstrap_local_policy_store(overwrite=False)
     browser_agent = BrowserAutomationAgent(portal_base_url=portal_url)
-    orchestrator = PriorAuthOrchestrator(browser_agent=browser_agent)
+    retrieval_agent = PayerPolicyRetrievalAgent()
+    orchestrator = PriorAuthOrchestrator(
+        browser_agent=browser_agent,
+        retrieval_agent=retrieval_agent,
+    )
     result = orchestrator.run(
         transcript=transcript,
         auto_approve=auto_approve,
@@ -120,6 +126,7 @@ def _execute_workflow(
     )
     result_dict = result.to_dict()
     result_dict["browser_mode"] = browser_agent.browser_mode
+    result_dict["retrieval_source"] = retrieval_agent.retrieval_source
     return result_dict
 
 

@@ -19,6 +19,46 @@ SAMPLE_TRANSCRIPT = (
 )
 
 
+KB_POLICY_DOC_UHC = """Policy ID: UHC-LUMBAR-MRI-2026
+Payer: UnitedHealthcare
+Member ID Prefixes: UHC, UHG
+Title: Lumbar Spine MRI Medical Necessity Policy
+
+Covered Procedure Codes: 72148 (MRI lumbar spine without contrast), 72149 (MRI lumbar spine with contrast), 72158 (MRI lumbar spine without and with contrast)
+
+Service Keywords: lumbar spine mri, mri lumbar, lumbar mri
+
+Medical Necessity Criteria (minimum 2 of 3 must be met):
+1. conservative_therapy_6w: Failure of at least 6 weeks of conservative therapy.
+2. radicular_symptoms: Radicular symptoms or neurologic deficit are documented.
+3. objective_imaging_or_exam: Objective imaging or exam findings support lumbar pathology.
+
+Required Documents:
+- progress_notes
+- conservative_therapy_notes
+- imaging_report
+
+Common Denial Patterns:
+- Missing conservative treatment duration
+- Insufficient neurologic findings documentation
+"""
+
+
+class FakeBedrockKBClient:
+    def __init__(
+        self,
+        retrieval_results: list[dict] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.retrieval_results = retrieval_results or []
+        self.error = error
+
+    def retrieve(self, **_: object) -> dict:
+        if self.error is not None:
+            raise self.error
+        return {"retrievalResults": self.retrieval_results}
+
+
 class FakeBrowserAgent(BrowserAutomationAgent):
     def __init__(self) -> None:
         super().__init__(portal_base_url="http://localhost:9999")
@@ -96,6 +136,45 @@ class TestPriorAuthPipeline(unittest.TestCase):
         self.assertTrue(policy.policy_id.startswith("UHC-"))
         self.assertTrue(necessity.meets_criteria)
         self.assertLess(necessity.denial_risk_score, 0.6)
+
+    def test_retrieval_agent_parses_policy_from_bedrock_kb(self) -> None:
+        retrieval = PayerPolicyRetrievalAgent(
+            kb_id="kb-123456",
+            kb_client=FakeBedrockKBClient(
+                retrieval_results=[
+                    {"content": {"text": KB_POLICY_DOC_UHC}, "score": 0.89},
+                ]
+            ),
+        )
+
+        policy = retrieval.retrieve(
+            payer_name="UnitedHealthcare",
+            member_id="UHC-4429871",
+            procedure_code="72148",
+            requested_service="MRI lumbar spine",
+        )
+
+        self.assertEqual(policy.policy_id, "UHC-LUMBAR-MRI-2026")
+        self.assertEqual(policy.payer_name, "UnitedHealthcare")
+        self.assertEqual(policy.minimum_criteria, 2)
+        self.assertEqual(policy.required_documents, ["progress_notes", "conservative_therapy_notes", "imaging_report"])
+        self.assertEqual(retrieval.retrieval_source, "bedrock_kb")
+
+    def test_retrieval_agent_falls_back_to_local_when_kb_unavailable(self) -> None:
+        retrieval = PayerPolicyRetrievalAgent(
+            kb_id="kb-123456",
+            kb_client=FakeBedrockKBClient(error=RuntimeError("kb unavailable")),
+        )
+
+        policy = retrieval.retrieve(
+            payer_name="UnitedHealthcare",
+            member_id="UHC-4429871",
+            procedure_code="72148",
+            requested_service="MRI lumbar spine",
+        )
+
+        self.assertTrue(policy.policy_id.startswith("UHC-"))
+        self.assertEqual(retrieval.retrieval_source, "local_fallback")
 
     def test_orchestrator_blocks_without_approval(self) -> None:
         orchestrator = PriorAuthOrchestrator(browser_agent=FakeBrowserAgent())

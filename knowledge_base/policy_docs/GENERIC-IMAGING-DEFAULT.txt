@@ -1,0 +1,21 @@
+Policy ID: GENERIC-IMAGING-DEFAULT
+Payer: Generic Payer
+Member ID Prefixes: (none — catch-all default policy)
+Title: Generic Imaging Prior Authorization Criteria
+
+Covered Procedure Codes: (all imaging procedure codes not covered by payer-specific policies)
+
+Service Keywords: (none — applies when no payer-specific match is found)
+
+Medical Necessity Criteria (minimum 1 of 2 must be met):
+1. clinical_indication: Clinical indication for the requested service is documented.
+2. conservative_therapy_6w: Conservative therapy history is provided when appropriate.
+
+Required Documents:
+- progress_notes
+
+Common Denial Patterns:
+- Demographic mismatch
+- Missing clinical rationale
+
+This is the default fallback policy used when no payer-specific prior authorization policy matches the request. It applies generic imaging authorization criteria. Providers should document the clinical indication for the requested service and, where applicable, include a history of conservative therapy attempts.

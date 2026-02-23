@@ -1,0 +1,23 @@
+Policy ID: AETNA-LUMBAR-MRI-2026
+Payer: Aetna
+Member ID Prefixes: AET, ATN
+Title: Aetna Advanced Imaging Prior Authorization Criteria
+
+Covered Procedure Codes: 72148 (MRI lumbar spine without contrast), 72149 (MRI lumbar spine with contrast), 72158 (MRI lumbar spine without and with contrast)
+
+Service Keywords: mri, lumbar
+
+Medical Necessity Criteria (minimum 2 of 3 must be met):
+1. conservative_therapy_6w: At least 6 weeks of physician-directed conservative treatment.
+2. persistent_pain: Persistent back or leg pain despite treatment.
+3. red_flag_or_neuro_deficit: Neurologic deficit or red-flag symptom is present.
+
+Required Documents:
+- progress_notes
+- conservative_therapy_notes
+
+Common Denial Patterns:
+- No documented treatment progression
+- Requested service not mapped to diagnosis
+
+This policy applies to Aetna members requesting advanced imaging including MRI of the lumbar spine. Providers must document that conservative management has been attempted and that clinical findings warrant further diagnostic imaging. Requests lacking documentation of treatment progression or neurologic assessment are commonly denied.

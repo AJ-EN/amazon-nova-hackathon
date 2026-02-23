@@ -1,0 +1,24 @@
+Policy ID: UHC-LUMBAR-MRI-2026
+Payer: UnitedHealthcare
+Member ID Prefixes: UHC, UHG
+Title: Lumbar Spine MRI Medical Necessity Policy
+
+Covered Procedure Codes: 72148 (MRI lumbar spine without contrast), 72149 (MRI lumbar spine with contrast), 72158 (MRI lumbar spine without and with contrast)
+
+Service Keywords: lumbar spine mri, mri lumbar, lumbar mri
+
+Medical Necessity Criteria (minimum 2 of 3 must be met):
+1. conservative_therapy_6w: Failure of at least 6 weeks of conservative therapy.
+2. radicular_symptoms: Radicular symptoms or neurologic deficit are documented.
+3. objective_imaging_or_exam: Objective imaging or exam findings support lumbar pathology.
+
+Required Documents:
+- progress_notes
+- conservative_therapy_notes
+- imaging_report
+
+Common Denial Patterns:
+- Missing conservative treatment duration
+- Insufficient neurologic findings documentation
+
+This policy applies to UnitedHealthcare members requesting lumbar spine MRI studies. The requesting provider must demonstrate that the patient has undergone adequate conservative treatment and presents with clinical findings that support the medical necessity of advanced imaging. Prior authorization is required before the imaging study is performed.

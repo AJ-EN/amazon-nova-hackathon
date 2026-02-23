@@ -6,7 +6,7 @@ Voice-first prior authorization workflow that converts clinician speech into a s
 
 - Voice intake parser that extracts patient and clinical context from transcript text.
 - Clinical reasoning agent that maps ICD-10/CPT codes and performs policy-criteria checks.
-- Payer policy retrieval agent backed by a local policy store (`knowledge_base/policies.json`).
+- Payer policy retrieval agent with Bedrock Knowledge Base RAG (`BEDROCK_KB_ID`) and local JSON fallback.
 - Browser automation adapter that submits to the local mock payer portal (`portal/app.py`).
 - End-to-end orchestrator with trace steps:
   - Voice Intake
@@ -91,6 +91,19 @@ python main.py --auto-approve
 
 If the model call fails and `require_model_success` is not enabled, the agent falls back to the heuristic mapper.
 
+### Enable Bedrock Knowledge Base retrieval
+
+To use real RAG retrieval instead of local policy scoring:
+
+```bash
+export BEDROCK_KB_ID=<your-kb-id>
+python main.py --auto-approve
+```
+
+If `knowledge_base/kb_config.json` exists (from `create_bedrock_kb.py`), the retrieval agent auto-loads `knowledge_base_id` when `BEDROCK_KB_ID` is not set.
+
+If KB retrieval fails at runtime, the system automatically falls back to local policy retrieval and marks `retrieval_source` as `local_fallback` in workflow output.
+
 ### Enable Nova-backed medical justification
 
 To generate prior-auth justification prose with Nova:
@@ -107,7 +120,7 @@ python main.py
 ## Next integration steps for hackathon depth
 
 1. Replace transcript parser with Nova 2 Sonic Bidi streaming + async tool calls.
-2. Replace local retrieval with Bedrock Knowledge Bases + Nova Multimodal Embeddings.
+2. Add metadata filters + richer source attribution for Bedrock Knowledge Base retrieval.
 3. Replace HTTP form submission adapter with Nova Act browser action sequence + screenshot approval.
 4. Add OpenTelemetry spans per graph node and export to CloudWatch.
 5. Add Bedrock Guardrails for transcript and justification safety.
