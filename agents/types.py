@@ -35,6 +35,7 @@ class CodingResult:
     procedure_code: str
     confidence: float
     rationale: str
+    source: str = "heuristic"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -110,4 +111,3 @@ class PriorAuthWorkflowResult:
             "submission": self.submission.to_dict() if self.submission else None,
             "next_action": self.next_action,
         }
-

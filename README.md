@@ -55,6 +55,27 @@ The workflow returns `next_action: "human_review_required"` and includes a revie
 python -m unittest -v test_nova.py
 ```
 
+### Optional live Nova coding integration test
+
+When AWS credentials and Bedrock model access are configured:
+
+```bash
+RUN_BEDROCK_INTEGRATION_TESTS=1 USE_NOVA_REASONING=1 \
+python -m unittest -v test_nova.TestPriorAuthPipeline.test_reasoning_agent_nova_integration
+```
+
+### Enable Nova-backed coding in runtime
+
+By default, code mapping uses the local heuristic mapper. To use Nova 2 Lite:
+
+```bash
+export USE_NOVA_REASONING=1
+export NOVA_REASONING_MODEL_ID=amazon.nova-lite-v1:0
+python main.py --auto-approve
+```
+
+If the model call fails and `require_model_success` is not enabled, the agent falls back to the heuristic mapper.
+
 ## Next integration steps for hackathon depth
 
 1. Replace transcript parser with Nova 2 Sonic Bidi streaming + async tool calls.

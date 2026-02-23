@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 
 from agents.browser_agent import BrowserAutomationAgent
@@ -101,6 +102,24 @@ class TestPriorAuthPipeline(unittest.TestCase):
         self.assertEqual(
             result.submission.reference if result.submission else "", "PA-TEST1234")
         self.assertEqual(result.next_action, "notify_clinician")
+
+    @unittest.skipUnless(
+        os.getenv("RUN_BEDROCK_INTEGRATION_TESTS") == "1",
+        "Set RUN_BEDROCK_INTEGRATION_TESTS=1 to run live Nova integration checks.",
+    )
+    def test_reasoning_agent_nova_integration(self) -> None:
+        extracted = VoiceIntakeAgent().ingest(SAMPLE_TRANSCRIPT)
+        agent = ClinicalReasoningAgent(
+            use_model=True,
+            require_model_success=True,
+        )
+        coding = agent.map_codes(extracted)
+
+        self.assertEqual(coding.source, "nova")
+        self.assertRegex(coding.diagnosis_code, r"^[A-Z]")
+        self.assertRegex(coding.procedure_code, r"^\d{5}$")
+        self.assertGreaterEqual(coding.confidence, 0.0)
+        self.assertLessEqual(coding.confidence, 1.0)
 
 
 if __name__ == "__main__":

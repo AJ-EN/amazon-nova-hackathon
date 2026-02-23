@@ -1,58 +1,54 @@
 from __future__ import annotations
 
+import json
+import os
+import re
+from typing import Any
+
 from agents.types import (
     CodingResult,
     ExtractedClinicalData,
     NecessityDecision,
     PolicyMatch,
 )
+from utils.bedrock_client import get_bedrock_client
+
+ICD10_PATTERN = re.compile(r"^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$")
+CPT_PATTERN = re.compile(r"^\d{5}$")
 
 
 class ClinicalReasoningAgent:
     """Maps clinical context to coding and medical necessity decisions."""
 
+    def __init__(
+        self,
+        use_model: bool | None = None,
+        model_id: str | None = None,
+        require_model_success: bool = False,
+    ) -> None:
+        env_toggle = os.getenv("USE_NOVA_REASONING", "0").lower() in {"1", "true", "yes"}
+        self.use_model = env_toggle if use_model is None else use_model
+        self.model_id = model_id or os.getenv("NOVA_REASONING_MODEL_ID", "amazon.nova-lite-v1:0")
+        self.require_model_success = require_model_success
+        self._runtime_client = None
+
     def map_codes(self, extracted: ExtractedClinicalData) -> CodingResult:
-        transcript = extracted.transcript.lower()
-        findings = " ".join(extracted.clinical_findings).lower()
-        signal = f"{transcript} {findings} {extracted.requested_service.lower()}"
+        if self.use_model:
+            try:
+                return self._map_codes_with_nova(extracted)
+            except Exception as exc:
+                if self.require_model_success:
+                    raise RuntimeError(f"Nova reasoning call failed: {exc}") from exc
 
-        diagnosis_code = "R52"
-        diagnosis_rationale = "Unspecified pain fallback due to limited diagnostic context."
-        confidence = 0.55
+                fallback = self._map_codes_heuristic(extracted)
+                fallback.source = "heuristic_fallback"
+                fallback.rationale = (
+                    f"{fallback.rationale} "
+                    f"Fell back from Nova call due to {exc.__class__.__name__}."
+                )
+                return fallback
 
-        if "radiculopathy" in signal and "lumbar" in signal:
-            diagnosis_code = "M54.17"
-            diagnosis_rationale = "Lumbar/lumbosacral radiculopathy identified from findings."
-            confidence = 0.92
-        elif "disc herniation" in signal and "lumbar" in signal:
-            diagnosis_code = "M51.26"
-            diagnosis_rationale = "Lumbar disc displacement inferred from herniation finding."
-            confidence = 0.88
-        elif "back pain" in signal:
-            diagnosis_code = "M54.50"
-            diagnosis_rationale = "Low back pain identified from transcript."
-            confidence = 0.8
-
-        procedure_code = "72148"
-        procedure_rationale = "MRI lumbar spine without contrast inferred from requested service."
-        if "without and with contrast" in signal:
-            procedure_code = "72158"
-            procedure_rationale = (
-                "MRI lumbar spine without/with contrast inferred from requested service."
-            )
-        elif "with contrast" in signal:
-            procedure_code = "72149"
-            procedure_rationale = "MRI lumbar spine with contrast inferred from requested service."
-        elif "ct" in signal and "lumbar" in signal:
-            procedure_code = "72131"
-            procedure_rationale = "CT lumbar spine inferred from requested service."
-
-        return CodingResult(
-            diagnosis_code=diagnosis_code,
-            procedure_code=procedure_code,
-            confidence=confidence,
-            rationale=f"{diagnosis_rationale} {procedure_rationale}",
-        )
+        return self._map_codes_heuristic(extracted)
 
     def evaluate_medical_necessity(
         self,
@@ -124,6 +120,132 @@ class ClinicalReasoningAgent:
             "denial_risk_score": f"{necessity.denial_risk_score:.2f}",
         }
 
+    def _map_codes_with_nova(self, extracted: ExtractedClinicalData) -> CodingResult:
+        if self._runtime_client is None:
+            self._runtime_client = get_bedrock_client()
+
+        system_prompt = (
+            "You are a medical coding assistant for prior authorization workflows. "
+            "Return only JSON with keys diagnosis_code, procedure_code, confidence, rationale. "
+            "Use a single ICD-10-CM diagnosis code and a single CPT procedure code. "
+            "Confidence must be a float between 0 and 1."
+        )
+        user_prompt = (
+            "Map the following clinical request to one ICD-10-CM code and one CPT code.\n"
+            f"Patient findings: {', '.join(extracted.clinical_findings) or 'Not specified'}\n"
+            f"Requested service: {extracted.requested_service}\n"
+            f"Clinical note: {extracted.transcript}\n"
+            "Respond with JSON only."
+        )
+
+        response = self._runtime_client.converse(
+            modelId=self.model_id,
+            system=[{"text": system_prompt}],
+            messages=[{"role": "user", "content": [{"text": user_prompt}]}],
+            inferenceConfig={"maxTokens": 240, "temperature": 0.0},
+        )
+
+        content = response.get("output", {}).get("message", {}).get("content", [])
+        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+        raw_text = "\n".join(part for part in text_parts if part).strip()
+        payload = self._parse_model_json(raw_text)
+
+        diagnosis_code = self._normalize_icd(payload.get("diagnosis_code", ""))
+        procedure_code = self._normalize_cpt(payload.get("procedure_code", ""))
+        confidence = self._normalize_confidence(payload.get("confidence", 0.75))
+        rationale = str(payload.get("rationale", "")).strip() or "Model-provided coding output."
+
+        if not ICD10_PATTERN.match(diagnosis_code):
+            raise ValueError(f"Invalid ICD-10 code returned by model: {diagnosis_code}")
+        if not CPT_PATTERN.match(procedure_code):
+            raise ValueError(f"Invalid CPT code returned by model: {procedure_code}")
+
+        return CodingResult(
+            diagnosis_code=diagnosis_code,
+            procedure_code=procedure_code,
+            confidence=confidence,
+            rationale=rationale,
+            source="nova",
+        )
+
+    @staticmethod
+    def _map_codes_heuristic(extracted: ExtractedClinicalData) -> CodingResult:
+        transcript = extracted.transcript.lower()
+        findings = " ".join(extracted.clinical_findings).lower()
+        signal = f"{transcript} {findings} {extracted.requested_service.lower()}"
+
+        diagnosis_code = "R52"
+        diagnosis_rationale = "Unspecified pain fallback due to limited diagnostic context."
+        confidence = 0.55
+
+        if "radiculopathy" in signal and "lumbar" in signal:
+            diagnosis_code = "M54.17"
+            diagnosis_rationale = "Lumbar/lumbosacral radiculopathy identified from findings."
+            confidence = 0.92
+        elif "disc herniation" in signal and "lumbar" in signal:
+            diagnosis_code = "M51.26"
+            diagnosis_rationale = "Lumbar disc displacement inferred from herniation finding."
+            confidence = 0.88
+        elif "back pain" in signal:
+            diagnosis_code = "M54.50"
+            diagnosis_rationale = "Low back pain identified from transcript."
+            confidence = 0.8
+
+        procedure_code = "72148"
+        procedure_rationale = "MRI lumbar spine without contrast inferred from requested service."
+        if "without and with contrast" in signal:
+            procedure_code = "72158"
+            procedure_rationale = (
+                "MRI lumbar spine without/with contrast inferred from requested service."
+            )
+        elif "with contrast" in signal:
+            procedure_code = "72149"
+            procedure_rationale = "MRI lumbar spine with contrast inferred from requested service."
+        elif "ct" in signal and "lumbar" in signal:
+            procedure_code = "72131"
+            procedure_rationale = "CT lumbar spine inferred from requested service."
+
+        return CodingResult(
+            diagnosis_code=diagnosis_code,
+            procedure_code=procedure_code,
+            confidence=confidence,
+            rationale=f"{diagnosis_rationale} {procedure_rationale}",
+            source="heuristic",
+        )
+
+    @staticmethod
+    def _parse_model_json(raw_text: str) -> dict[str, Any]:
+        if not raw_text:
+            raise ValueError("Model returned empty output.")
+
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"Model output did not contain JSON: {raw_text}")
+
+        json_blob = raw_text[start : end + 1]
+        parsed = json.loads(json_blob)
+        if not isinstance(parsed, dict):
+            raise ValueError("Model JSON output is not an object.")
+        return parsed
+
+    @staticmethod
+    def _normalize_icd(value: Any) -> str:
+        return str(value).strip().upper().replace(" ", "")
+
+    @staticmethod
+    def _normalize_cpt(value: Any) -> str:
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        return digits[:5]
+
+    @staticmethod
+    def _normalize_confidence(value: Any) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = 0.75
+        return max(0.0, min(parsed, 1.0))
+
     @staticmethod
     def _criterion_met(criterion_id: str, extracted: ExtractedClinicalData) -> bool:
         transcript = extracted.transcript.lower()
@@ -136,8 +258,7 @@ class ClinicalReasoningAgent:
             neuro_terms = ("radiculopathy", "weakness", "numbness", "sciatica")
             return any(term in signal for term in neuro_terms)
         if criterion_id == "objective_imaging_or_exam":
-            objective_terms = ("herniation", "confirmed on",
-                               "seen on", "x-ray", "mri")
+            objective_terms = ("herniation", "confirmed on", "seen on", "x-ray", "mri")
             return bool(extracted.imaging_evidence) or any(term in signal for term in objective_terms)
         if criterion_id == "persistent_pain":
             return "pain" in signal and (extracted.conservative_therapy_weeks or 0) >= 4
@@ -175,16 +296,14 @@ class ClinicalReasoningAgent:
         missing: list[str],
     ) -> str:
         patient = extracted.patient_name or "the patient"
-        findings = ", ".join(
-            extracted.clinical_findings[:3]) or "documented clinical findings"
+        findings = ", ".join(extracted.clinical_findings[:3]) or "documented clinical findings"
         therapy = (
             f"{extracted.conservative_therapy_weeks} weeks of conservative therapy"
             if extracted.conservative_therapy_weeks
             else "documented conservative management"
         )
         status = "meets" if meets_criteria else "partially meets"
-        satisfied_text = "; ".join(
-            satisfied[:2]) if satisfied else "clinical indication documented"
+        satisfied_text = "; ".join(satisfied[:2]) if satisfied else "clinical indication documented"
         missing_text = "; ".join(missing[:2]) if missing else "none"
 
         return (
