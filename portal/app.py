@@ -77,6 +77,7 @@ def _summarize_run(
         "denial_risk_score": necessity.get("denial_risk_score"),
         "submission_status": submission.get("status"),
         "submission_reference": submission.get("reference"),
+        "browser_mode": result.get("browser_mode"),
         "duration_ms": _trace_duration_ms(trace),
         "trace_steps": len(trace),
         "error": error,
@@ -117,7 +118,9 @@ def _execute_workflow(
         auto_approve=auto_approve,
         trace_hook=trace_hook,
     )
-    return result.to_dict()
+    result_dict = result.to_dict()
+    result_dict["browser_mode"] = browser_agent.browser_mode
+    return result_dict
 
 
 def _run_workflow_async(
