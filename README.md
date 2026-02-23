@@ -76,6 +76,19 @@ python main.py --auto-approve
 
 If the model call fails and `require_model_success` is not enabled, the agent falls back to the heuristic mapper.
 
+### Enable Nova-backed medical justification
+
+To generate prior-auth justification prose with Nova:
+
+```bash
+export USE_NOVA_REASONING=1
+export USE_NOVA_JUSTIFICATION=1
+export NOVA_JUSTIFICATION_MODEL_ID=amazon.nova-lite-v1:0
+python main.py
+```
+
+`USE_NOVA_EXTENDED_THINKING=1` is enabled by default for the justification call and automatically falls back to standard inference if unsupported.
+
 ## Next integration steps for hackathon depth
 
 1. Replace transcript parser with Nova 2 Sonic Bidi streaming + async tool calls.

@@ -24,11 +24,30 @@ class ClinicalReasoningAgent:
         self,
         use_model: bool | None = None,
         model_id: str | None = None,
+        use_model_justification: bool | None = None,
+        justification_model_id: str | None = None,
+        prefer_extended_thinking: bool | None = None,
         require_model_success: bool = False,
     ) -> None:
         env_toggle = os.getenv("USE_NOVA_REASONING", "0").lower() in {"1", "true", "yes"}
         self.use_model = env_toggle if use_model is None else use_model
         self.model_id = model_id or os.getenv("NOVA_REASONING_MODEL_ID", "amazon.nova-lite-v1:0")
+        justification_env_default = "1" if self.use_model else "0"
+        justification_toggle = os.getenv(
+            "USE_NOVA_JUSTIFICATION", justification_env_default
+        ).lower() in {"1", "true", "yes"}
+        self.use_model_justification = (
+            justification_toggle if use_model_justification is None else use_model_justification
+        )
+        self.justification_model_id = justification_model_id or os.getenv(
+            "NOVA_JUSTIFICATION_MODEL_ID", self.model_id
+        )
+        extended_thinking_toggle = os.getenv(
+            "USE_NOVA_EXTENDED_THINKING", "1"
+        ).lower() in {"1", "true", "yes"}
+        self.prefer_extended_thinking = (
+            extended_thinking_toggle if prefer_extended_thinking is None else prefer_extended_thinking
+        )
         self.require_model_success = require_model_success
         self._runtime_client = None
 
@@ -80,14 +99,18 @@ class ClinicalReasoningAgent:
             meets_criteria=meets_criteria,
             missing_criteria_count=len(missing),
             missing_documents_count=len(missing_documents),
+            coding_confidence=coding.confidence,
+            coding_source=coding.source,
         )
-        justification = self._build_justification(
+        justification = self._build_justification_with_resilience(
             extracted=extracted,
             coding=coding,
             policy=policy,
             meets_criteria=meets_criteria,
             satisfied=satisfied,
             missing=missing,
+            missing_documents=missing_documents,
+            denial_risk_score=denial_risk_score,
         )
 
         return NecessityDecision(
@@ -123,8 +146,7 @@ class ClinicalReasoningAgent:
         }
 
     def _map_codes_with_nova(self, extracted: ExtractedClinicalData) -> CodingResult:
-        if self._runtime_client is None:
-            self._runtime_client = get_bedrock_client()
+        self._ensure_runtime_client()
 
         system_prompt = (
             "You are a medical coding assistant for prior authorization workflows. "
@@ -169,6 +191,136 @@ class ClinicalReasoningAgent:
             rationale=rationale,
             source="nova",
         )
+
+    def _build_justification_with_resilience(
+        self,
+        extracted: ExtractedClinicalData,
+        coding: CodingResult,
+        policy: PolicyMatch,
+        meets_criteria: bool,
+        satisfied: list[str],
+        missing: list[str],
+        missing_documents: list[str],
+        denial_risk_score: float,
+    ) -> str:
+        if self.use_model_justification:
+            try:
+                return self._build_justification_with_nova(
+                    extracted=extracted,
+                    coding=coding,
+                    policy=policy,
+                    meets_criteria=meets_criteria,
+                    satisfied=satisfied,
+                    missing=missing,
+                    missing_documents=missing_documents,
+                    denial_risk_score=denial_risk_score,
+                )
+            except Exception as exc:
+                if self.require_model_success:
+                    raise RuntimeError(f"Nova justification call failed: {exc}") from exc
+                template = self._build_justification(
+                    extracted=extracted,
+                    coding=coding,
+                    policy=policy,
+                    meets_criteria=meets_criteria,
+                    satisfied=satisfied,
+                    missing=missing,
+                )
+                return (
+                    f"{template} "
+                    f"Justification fallback used due to {exc.__class__.__name__}."
+                )
+
+        return self._build_justification(
+            extracted=extracted,
+            coding=coding,
+            policy=policy,
+            meets_criteria=meets_criteria,
+            satisfied=satisfied,
+            missing=missing,
+        )
+
+    def _build_justification_with_nova(
+        self,
+        extracted: ExtractedClinicalData,
+        coding: CodingResult,
+        policy: PolicyMatch,
+        meets_criteria: bool,
+        satisfied: list[str],
+        missing: list[str],
+        missing_documents: list[str],
+        denial_risk_score: float,
+    ) -> str:
+        self._ensure_runtime_client()
+        status = "meets" if meets_criteria else "partially meets"
+        satisfied_text = "; ".join(satisfied) if satisfied else "None"
+        missing_text = "; ".join(missing) if missing else "None"
+        missing_doc_text = "; ".join(missing_documents) if missing_documents else "None"
+        findings = ", ".join(extracted.clinical_findings) if extracted.clinical_findings else "None"
+
+        system_prompt = (
+            "You draft prior authorization medical necessity narratives for U.S. providers. "
+            "Write concise payer-ready clinical prose in one paragraph. "
+            "Do not mention AI, model confidence, or uncertainty language."
+        )
+        user_prompt = (
+            "Draft the medical necessity justification.\n"
+            f"Policy: {policy.title}\n"
+            f"Case status: {status} policy criteria\n"
+            f"Patient: {extracted.patient_name or 'Unknown patient'}\n"
+            f"DOB: {extracted.date_of_birth or 'Unknown'}\n"
+            f"Requested service: {extracted.requested_service}\n"
+            f"ICD-10: {coding.diagnosis_code}\n"
+            f"CPT: {coding.procedure_code}\n"
+            f"Clinical findings: {findings}\n"
+            f"Clinical history: {extracted.transcript}\n"
+            f"Satisfied criteria: {satisfied_text}\n"
+            f"Missing criteria: {missing_text}\n"
+            f"Missing documents: {missing_doc_text}\n"
+            f"Denial risk score: {denial_risk_score:.2f}\n"
+            "Output only the justification paragraph."
+        )
+
+        request_payload: dict[str, Any] = {
+            "modelId": self.justification_model_id,
+            "system": [{"text": system_prompt}],
+            "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
+            "inferenceConfig": {"maxTokens": 420, "temperature": 0.2},
+        }
+
+        response = None
+        if self.prefer_extended_thinking:
+            extended_payload = dict(request_payload)
+            extended_payload["additionalModelRequestFields"] = {
+                "reasoningConfig": {"budgetTokens": 512}
+            }
+            try:
+                response = self._runtime_client.converse(**extended_payload)
+            except Exception:
+                response = None
+
+        if response is None:
+            response = self._runtime_client.converse(**request_payload)
+
+        text = self._extract_text_from_converse(response)
+        if not text:
+            raise ValueError("Model returned empty justification text.")
+        return text
+
+    @staticmethod
+    def _extract_text_from_converse(response: dict[str, Any]) -> str:
+        content = response.get("output", {}).get("message", {}).get("content", [])
+        text_parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text.strip())
+        return " ".join(text_parts).strip()
+
+    def _ensure_runtime_client(self) -> None:
+        if self._runtime_client is None:
+            self._runtime_client = get_bedrock_client()
 
     def _apply_coding_guardrails(
         self,
@@ -371,13 +523,23 @@ class ClinicalReasoningAgent:
 
     @staticmethod
     def _calculate_denial_risk(
-        meets_criteria: bool, missing_criteria_count: int, missing_documents_count: int
+        meets_criteria: bool,
+        missing_criteria_count: int,
+        missing_documents_count: int,
+        coding_confidence: float,
+        coding_source: str,
     ) -> float:
         risk = 0.12
         if not meets_criteria:
             risk += 0.35
         risk += 0.08 * missing_criteria_count
         risk += 0.10 * missing_documents_count
+        risk += 0.12 * (1.0 - max(0.0, min(coding_confidence, 1.0)))
+        source_lower = coding_source.lower()
+        if "guardrailed" in source_lower:
+            risk += 0.08
+        elif "fallback" in source_lower:
+            risk += 0.05
         return round(min(risk, 0.99), 2)
 
     @staticmethod

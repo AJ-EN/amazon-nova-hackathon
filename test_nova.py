@@ -128,6 +128,43 @@ class TestPriorAuthPipeline(unittest.TestCase):
         self.assertEqual(coding.source, "nova_guardrailed")
         self.assertIn("Guardrail adjustments:", coding.rationale)
 
+    def test_denial_risk_increases_for_guardrailed_low_confidence_coding(self) -> None:
+        extracted = VoiceIntakeAgent().ingest(SAMPLE_TRANSCRIPT)
+        retrieval = PayerPolicyRetrievalAgent()
+        policy = retrieval.retrieve(
+            payer_name=extracted.payer_name,
+            member_id=extracted.member_id,
+            procedure_code="72148",
+            requested_service=extracted.requested_service,
+        )
+        reasoning = ClinicalReasoningAgent()
+        coding_high_conf = CodingResult(
+            diagnosis_code="M54.16",
+            procedure_code="72148",
+            confidence=0.96,
+            rationale="High confidence coding",
+            source="nova",
+        )
+        coding_guardrailed = CodingResult(
+            diagnosis_code="M54.16",
+            procedure_code="72148",
+            confidence=0.62,
+            rationale="Guardrailed coding",
+            source="nova_guardrailed",
+        )
+
+        high_conf_decision = reasoning.evaluate_medical_necessity(
+            extracted, coding_high_conf, policy
+        )
+        guardrailed_decision = reasoning.evaluate_medical_necessity(
+            extracted, coding_guardrailed, policy
+        )
+
+        self.assertGreater(
+            guardrailed_decision.denial_risk_score,
+            high_conf_decision.denial_risk_score,
+        )
+
     @unittest.skipUnless(
         os.getenv("RUN_BEDROCK_INTEGRATION_TESTS") == "1",
         "Set RUN_BEDROCK_INTEGRATION_TESTS=1 to run live Nova integration checks.",
@@ -140,7 +177,9 @@ class TestPriorAuthPipeline(unittest.TestCase):
         )
         coding = agent.map_codes(extracted)
 
-        self.assertEqual(coding.source, "nova")
+        self.assertIn(coding.source, {"nova", "nova_guardrailed"})
+        if coding.source.endswith("guardrailed"):
+            self.assertIn("Guardrail adjustments:", coding.rationale)
         self.assertRegex(coding.diagnosis_code, r"^[A-Z]")
         self.assertRegex(coding.procedure_code, r"^\d{5}$")
         self.assertGreaterEqual(coding.confidence, 0.0)
