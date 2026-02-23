@@ -40,6 +40,20 @@ python main.py --auto-approve
 curl http://127.0.0.1:5000/requests
 ```
 
+5. Open live execution dashboard:
+```bash
+open http://127.0.0.1:5000/dashboard
+```
+
+The dashboard runs workflows asynchronously and streams live step-by-step updates via Server-Sent Events.
+
+### Dashboard API
+
+- `POST /api/runs`: queue a workflow run (returns `202`)
+- `GET /api/runs`: list recent run summaries
+- `GET /api/runs/<run_id>`: fetch full run state/result
+- `GET /api/runs/<run_id>/events`: stream live run events (SSE)
+
 ## Human-in-the-loop mode
 
 Run without `--auto-approve` to stop at the approval gate:
@@ -53,6 +67,7 @@ The workflow returns `next_action: "human_review_required"` and includes a revie
 
 ```bash
 python -m unittest -v test_nova.py
+python -m unittest -v test_portal_api.py
 ```
 
 ### Optional live Nova coding integration test

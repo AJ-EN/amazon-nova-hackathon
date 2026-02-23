@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PriorAuth Agent Control Room</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+
+      :root {
+        --bg-1: #07131d;
+        --bg-2: #0d2630;
+        --surface: rgba(10, 22, 32, 0.82);
+        --surface-strong: rgba(12, 32, 45, 0.95);
+        --line: rgba(138, 179, 200, 0.22);
+        --text: #e5f3f8;
+        --muted: #99b9c7;
+        --accent: #1ec8a5;
+        --accent-2: #f7b267;
+        --danger: #ff6f61;
+        --ok: #58d68d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Manrope", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 10% 10%, rgba(30, 200, 165, 0.16), transparent 30%),
+          radial-gradient(circle at 80% 0%, rgba(247, 178, 103, 0.14), transparent 34%),
+          linear-gradient(135deg, var(--bg-1), var(--bg-2));
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 26px 26px;
+      }
+
+      .shell {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 24px 16px 32px;
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        backdrop-filter: blur(8px);
+        box-shadow: 0 10px 30px rgba(2, 8, 15, 0.3);
+      }
+
+      .left {
+        display: grid;
+        gap: 14px;
+      }
+
+      .card-head {
+        padding: 16px 16px 8px;
+      }
+
+      .card-title {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        letter-spacing: 0.04em;
+        font-size: 1.04rem;
+      }
+
+      .card-subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .form-body,
+      .history-body,
+      .main-body {
+        padding: 8px 16px 16px;
+      }
+
+      label {
+        display: block;
+        font-size: 0.86rem;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      textarea,
+      input[type="text"] {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(7, 18, 26, 0.9);
+        color: var(--text);
+        padding: 12px;
+        font: inherit;
+        transition: border-color 120ms ease;
+      }
+
+      textarea {
+        min-height: 156px;
+        resize: vertical;
+      }
+
+      textarea:focus,
+      input[type="text"]:focus {
+        outline: none;
+        border-color: rgba(30, 200, 165, 0.6);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .btn {
+        appearance: none;
+        border: none;
+        border-radius: 11px;
+        background: linear-gradient(130deg, var(--accent), #0caeb8);
+        color: #042225;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        padding: 11px 14px;
+        transition: transform 120ms ease, box-shadow 120ms ease;
+        box-shadow: 0 8px 18px rgba(9, 170, 176, 0.27);
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn:disabled {
+        opacity: 0.65;
+        cursor: wait;
+      }
+
+      .status {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 0.86rem;
+        background: rgba(8, 28, 38, 0.84);
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      .run-list {
+        display: grid;
+        gap: 8px;
+        max-height: 320px;
+        overflow: auto;
+      }
+
+      .run-item {
+        border: 1px solid var(--line);
+        background: rgba(8, 20, 28, 0.75);
+        border-radius: 10px;
+        padding: 10px 11px;
+        cursor: pointer;
+        transition: border-color 120ms ease, transform 120ms ease;
+      }
+
+      .run-item:hover {
+        border-color: rgba(247, 178, 103, 0.52);
+        transform: translateY(-1px);
+      }
+
+      .run-item.active {
+        border-color: rgba(30, 200, 165, 0.63);
+      }
+
+      .run-line {
+        margin: 0;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .run-head {
+        margin: 0 0 4px;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .main-body {
+        display: grid;
+        gap: 14px;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        background: rgba(6, 20, 30, 0.84);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .metric-key {
+        color: var(--muted);
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .metric-value {
+        margin-top: 4px;
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      .trace-wrap,
+      .json-wrap {
+        background: rgba(6, 20, 30, 0.84);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .trace-head,
+      .json-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .trace-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .trace-table th,
+      .trace-table td {
+        text-align: left;
+        padding: 9px 10px;
+        border-bottom: 1px solid rgba(138, 179, 200, 0.1);
+        font-size: 0.84rem;
+      }
+
+      .trace-table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .badge {
+        display: inline-block;
+        font-size: 0.74rem;
+        border-radius: 999px;
+        padding: 2px 8px;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+      }
+
+      .badge.completed {
+        background: rgba(88, 214, 141, 0.2);
+        color: #9ce8bc;
+      }
+
+      .badge.in_progress {
+        background: rgba(247, 178, 103, 0.18);
+        color: #ffd6a8;
+      }
+
+      .badge.blocked,
+      .badge.failed {
+        background: rgba(255, 111, 97, 0.2);
+        color: #ffb3aa;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        max-height: 300px;
+        overflow: auto;
+        font-size: 0.8rem;
+        line-height: 1.45;
+        color: #cae8f0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .ok {
+        color: var(--ok);
+      }
+
+      .warn {
+        color: var(--accent-2);
+      }
+
+      .danger {
+        color: var(--danger);
+      }
+
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .animated {
+        animation: fadeUp 260ms ease;
+      }
+
+      @media (max-width: 1020px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+        .metrics {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="left">
+        <article class="panel">
+          <div class="card-head">
+            <h2 class="card-title">Run Workflow</h2>
+            <p class="card-subtitle">Launch a full prior-auth run and inspect agent execution.</p>
+          </div>
+          <div class="form-body">
+            <label for="transcript">Clinician transcript</label>
+            <textarea id="transcript">{{ default_transcript }}</textarea>
+            <div style="height: 10px"></div>
+
+            <label for="portalUrl">Portal URL</label>
+            <input id="portalUrl" type="text" value="" placeholder="http://127.0.0.1:5000" />
+            <div style="height: 10px"></div>
+
+            <div class="row">
+              <label class="checkbox">
+                <input id="autoApprove" type="checkbox" />
+                Auto-approve and submit
+              </label>
+              <button id="runButton" class="btn" type="button">Run Agent</button>
+            </div>
+
+            <div id="statusBanner" class="status">Ready.</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="card-head">
+            <h2 class="card-title">Recent Runs</h2>
+            <p class="card-subtitle">Click a run to inspect trace and payload.</p>
+          </div>
+          <div class="history-body">
+            <div id="runList" class="run-list"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="card-head">
+          <h2 class="card-title">Execution Trace</h2>
+          <p class="card-subtitle">Agent graph state changes and structured output.</p>
+        </div>
+        <div class="main-body">
+          <div id="metrics" class="metrics"></div>
+
+          <div class="trace-wrap">
+            <div class="trace-head">
+              <strong>Trace Steps</strong>
+              <span id="traceCount" class="card-subtitle">0 steps</span>
+            </div>
+            <div style="overflow: auto">
+              <table class="trace-table">
+                <thead>
+                  <tr>
+                    <th>Step</th>
+                    <th>Status</th>
+                    <th>Detail</th>
+                    <th>Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody id="traceBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="json-wrap">
+            <div class="json-head">
+              <strong>Structured Result</strong>
+            </div>
+            <pre id="resultJson">{}</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const runButton = document.getElementById("runButton");
+      const transcriptInput = document.getElementById("transcript");
+      const portalUrlInput = document.getElementById("portalUrl");
+      const autoApproveInput = document.getElementById("autoApprove");
+      const statusBanner = document.getElementById("statusBanner");
+      const runList = document.getElementById("runList");
+      const metrics = document.getElementById("metrics");
+      const traceBody = document.getElementById("traceBody");
+      const traceCount = document.getElementById("traceCount");
+      const resultJson = document.getElementById("resultJson");
+
+      let activeRunId = null;
+      let eventSource = null;
+      let refreshTimer = null;
+
+      const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+      const fmt = (v) => (v === undefined || v === null || v === "" ? "-" : String(v));
+
+      function isTerminalStatus(status) {
+        return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+      }
+
+      function statusClass(status) {
+        if (!status) return "in_progress";
+        const s = String(status).toLowerCase();
+        if (s === "completed" || s === "submitted") return "completed";
+        if (s === "failed") return "failed";
+        if (s === "blocked" || s === "needs_approval") return "blocked";
+        return "in_progress";
+      }
+
+      function metricCard(label, value) {
+        return `
+          <div class="metric animated">
+            <div class="metric-key">${label}</div>
+            <div class="metric-value">${fmt(value)}</div>
+          </div>
+        `;
+      }
+
+      function setStatus(text, tone = "neutral") {
+        statusBanner.textContent = text;
+        statusBanner.className = "status";
+        if (tone === "ok") statusBanner.classList.add("ok");
+        if (tone === "warn") statusBanner.classList.add("warn");
+        if (tone === "danger") statusBanner.classList.add("danger");
+      }
+
+      function closeRunStream() {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+      }
+
+      function queueRunListRefresh() {
+        if (refreshTimer) return;
+        refreshTimer = setTimeout(async () => {
+          refreshTimer = null;
+          await loadRuns();
+        }, 300);
+      }
+
+      function applyRunBanner(summary) {
+        const runStatus = String(summary.run_status || "").toLowerCase();
+        const submissionStatus = String(summary.submission_status || "").toLowerCase();
+        if (runStatus === "queued") {
+          setStatus(`Run ${summary.id} queued...`, "warn");
+          return;
+        }
+        if (runStatus === "running") {
+          setStatus(`Run ${summary.id} in progress...`, "warn");
+          return;
+        }
+        if (runStatus === "failed") {
+          setStatus(`Run ${summary.id} failed: ${summary.error || "unknown error"}`, "danger");
+          return;
+        }
+        if (submissionStatus === "submitted") {
+          setStatus(`Run ${summary.id} submitted successfully.`, "ok");
+          return;
+        }
+        if (submissionStatus === "failed") {
+          setStatus(`Run ${summary.id} completed with submission failure.`, "danger");
+          return;
+        }
+        setStatus(`Run ${summary.id} completed.`, "ok");
+      }
+
+      function renderRun(record) {
+        const summary = record.summary || {};
+        const result = record.result || {};
+        const trace = result.trace || [];
+
+        metrics.innerHTML =
+          metricCard("Run ID", summary.id) +
+          metricCard("Run Status", summary.run_status) +
+          metricCard("Next Action", summary.next_action) +
+          metricCard("Coding Source", summary.coding_source) +
+          metricCard("Denial Risk", summary.denial_risk_score) +
+          metricCard("Submission", summary.submission_status);
+
+        traceBody.innerHTML = trace
+          .map(
+            (step) => `
+              <tr class="animated">
+                <td>${fmt(step.step)}</td>
+                <td><span class="badge ${statusClass(step.status)}">${fmt(step.status)}</span></td>
+                <td>${fmt(step.detail)}</td>
+                <td>${fmt(step.timestamp)}</td>
+              </tr>
+            `
+          )
+          .join("");
+        traceCount.textContent = `${trace.length} steps`;
+        resultJson.textContent = JSON.stringify(result, null, 2);
+      }
+
+      function renderRunList(runs) {
+        runList.innerHTML = "";
+        if (!runs.length) {
+          runList.innerHTML = '<p class="run-line">No runs yet.</p>';
+          return;
+        }
+
+        runs.forEach((run) => {
+          const item = document.createElement("div");
+          item.className = "run-item" + (run.id === activeRunId ? " active" : "");
+          item.innerHTML = `
+            <p class="run-head">${run.id}</p>
+            <p class="run-line">Status: ${fmt(run.run_status)} | Action: ${fmt(run.next_action)}</p>
+            <p class="run-line">Coding: ${fmt(run.coding_source)} | Risk: ${fmt(run.denial_risk_score)}</p>
+            <p class="run-line">Submission: ${fmt(run.submission_status)} | ${fmt(run.duration_ms)} ms</p>
+          `;
+          item.onclick = async () => {
+            activeRunId = run.id;
+            const record = await loadRun(run.id);
+            if (record && !isTerminalStatus(record.status)) {
+              openRunStream(record.id);
+            } else {
+              closeRunStream();
+            }
+            await loadRuns();
+          };
+          runList.appendChild(item);
+        });
+      }
+
+      async function loadRuns() {
+        const res = await fetch("/api/runs?limit=20");
+        const payload = await res.json();
+        renderRunList(payload.runs || []);
+      }
+
+      async function loadRun(runId) {
+        const res = await fetch(`/api/runs/${runId}`);
+        if (!res.ok) {
+          setStatus("Failed to load selected run.", "danger");
+          return null;
+        }
+        const record = await res.json();
+        renderRun(record);
+        applyRunBanner(record.summary || {});
+        return record;
+      }
+
+      function openRunStream(runId) {
+        closeRunStream();
+        const url = `/api/runs/${runId}/events`;
+        eventSource = new EventSource(url);
+
+        const handleEvent = (evt) => {
+          if (!evt.data) return;
+          const payload = JSON.parse(evt.data);
+          const record = payload.record;
+          if (!record) return;
+          if (record.id !== activeRunId) return;
+
+          renderRun(record);
+          applyRunBanner(record.summary || {});
+          queueRunListRefresh();
+
+          if (isTerminalStatus(record.status)) {
+            closeRunStream();
+          }
+        };
+
+        ["snapshot", "run_queued", "run_started", "trace", "run_completed", "run_failed", "terminal"].forEach(
+          (eventName) => {
+            eventSource.addEventListener(eventName, handleEvent);
+          }
+        );
+
+        eventSource.onerror = () => {
+          if (!eventSource) return;
+          setStatus("Live stream interrupted. You can still refresh run details.", "warn");
+        };
+      }
+
+      async function createRun() {
+        const transcript = transcriptInput.value.trim();
+        if (!transcript) {
+          setStatus("Transcript is required.", "danger");
+          return;
+        }
+
+        runButton.disabled = true;
+        setStatus("Queueing workflow run...", "warn");
+
+        try {
+          const body = {
+            transcript,
+            auto_approve: autoApproveInput.checked,
+          };
+          const portalUrl = portalUrlInput.value.trim();
+          if (portalUrl) body.portal_url = portalUrl;
+
+          const res = await fetch("/api/runs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const record = await res.json();
+          if (!res.ok) {
+            setStatus(`Run failed: ${record.detail || record.error || "Unknown error"}`, "danger");
+            return;
+          }
+
+          activeRunId = record.id;
+          renderRun(record);
+          applyRunBanner(record.summary || {});
+          await loadRuns();
+          openRunStream(record.id);
+        } catch (err) {
+          setStatus(`Run failed: ${err}`, "danger");
+        } finally {
+          runButton.disabled = false;
+        }
+      }
+
+      runButton.addEventListener("click", createRun);
+      loadRuns();
+    </script>
+  </body>
+</html>
