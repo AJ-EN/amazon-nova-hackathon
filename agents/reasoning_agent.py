@@ -35,7 +35,8 @@ class ClinicalReasoningAgent:
     def map_codes(self, extracted: ExtractedClinicalData) -> CodingResult:
         if self.use_model:
             try:
-                return self._map_codes_with_nova(extracted)
+                nova_coding = self._map_codes_with_nova(extracted)
+                return self._apply_coding_guardrails(extracted, nova_coding)
             except Exception as exc:
                 if self.require_model_success:
                     raise RuntimeError(f"Nova reasoning call failed: {exc}") from exc
@@ -46,9 +47,10 @@ class ClinicalReasoningAgent:
                     f"{fallback.rationale} "
                     f"Fell back from Nova call due to {exc.__class__.__name__}."
                 )
-                return fallback
+                return self._apply_coding_guardrails(extracted, fallback)
 
-        return self._map_codes_heuristic(extracted)
+        heuristic_coding = self._map_codes_heuristic(extracted)
+        return self._apply_coding_guardrails(extracted, heuristic_coding)
 
     def evaluate_medical_necessity(
         self,
@@ -168,6 +170,46 @@ class ClinicalReasoningAgent:
             source="nova",
         )
 
+    def _apply_coding_guardrails(
+        self,
+        extracted: ExtractedClinicalData,
+        coding: CodingResult,
+    ) -> CodingResult:
+        allowed_icd, preferred_icd = self._allowed_diagnosis_codes(extracted)
+        allowed_cpt, preferred_cpt = self._allowed_procedure_codes(extracted)
+
+        diagnosis_code = coding.diagnosis_code
+        procedure_code = coding.procedure_code
+        notes: list[str] = []
+        changed = False
+
+        if allowed_cpt and procedure_code not in allowed_cpt and preferred_cpt:
+            notes.append(f"Procedure {procedure_code} replaced with {preferred_cpt}.")
+            procedure_code = preferred_cpt
+            changed = True
+
+        if allowed_icd and diagnosis_code not in allowed_icd and preferred_icd:
+            notes.append(f"Diagnosis {diagnosis_code} replaced with {preferred_icd}.")
+            diagnosis_code = preferred_icd
+            changed = True
+
+        if not changed:
+            return coding
+
+        source = coding.source
+        if not source.endswith("_guardrailed"):
+            source = f"{source}_guardrailed"
+
+        confidence = max(0.0, min(coding.confidence * 0.95, 1.0))
+        rationale = f"{coding.rationale} Guardrail adjustments: {' '.join(notes)}"
+        return CodingResult(
+            diagnosis_code=diagnosis_code,
+            procedure_code=procedure_code,
+            confidence=confidence,
+            rationale=rationale,
+            source=source,
+        )
+
     @staticmethod
     def _map_codes_heuristic(extracted: ExtractedClinicalData) -> CodingResult:
         transcript = extracted.transcript.lower()
@@ -245,6 +287,58 @@ class ClinicalReasoningAgent:
         except (TypeError, ValueError):
             parsed = 0.75
         return max(0.0, min(parsed, 1.0))
+
+    @staticmethod
+    def _allowed_diagnosis_codes(extracted: ExtractedClinicalData) -> tuple[set[str], str | None]:
+        signal = f"{extracted.transcript} {' '.join(extracted.clinical_findings)}".lower()
+        service = extracted.requested_service.lower()
+        lumbar_context = "lumbar" in signal or "lumbar" in service
+
+        allowed: set[str] = set()
+        preferred: str | None = None
+
+        if lumbar_context and ("radiculopathy" in signal or "sciatica" in signal):
+            allowed.update({"M54.16", "M54.17"})
+            preferred = "M54.16"
+
+        if lumbar_context and "disc herniation" in signal:
+            allowed.add("M51.26")
+            if preferred is None:
+                preferred = "M51.26"
+
+        if "back pain" in signal:
+            allowed.add("M54.50")
+            if preferred is None:
+                preferred = "M54.50"
+
+        if not allowed:
+            allowed.add("R52")
+            preferred = "R52"
+
+        return allowed, preferred
+
+    @staticmethod
+    def _allowed_procedure_codes(extracted: ExtractedClinicalData) -> tuple[set[str], str | None]:
+        signal = f"{extracted.transcript} {extracted.requested_service}".lower()
+        lumbar_context = "lumbar" in signal
+
+        if "mri" in signal and lumbar_context:
+            allowed = {"72148", "72149", "72158"}
+            if "without and with contrast" in signal:
+                return allowed, "72158"
+            if "with contrast" in signal:
+                return allowed, "72149"
+            return allowed, "72148"
+
+        if "ct" in signal and lumbar_context:
+            allowed = {"72131", "72132", "72133"}
+            if "without and with contrast" in signal:
+                return allowed, "72133"
+            if "with contrast" in signal:
+                return allowed, "72132"
+            return allowed, "72131"
+
+        return set(), None
 
     @staticmethod
     def _criterion_met(criterion_id: str, extracted: ExtractedClinicalData) -> bool:

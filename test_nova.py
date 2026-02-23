@@ -7,7 +7,7 @@ from agents.browser_agent import BrowserAutomationAgent
 from agents.orchestrator import PriorAuthOrchestrator
 from agents.reasoning_agent import ClinicalReasoningAgent
 from agents.retrieval_agent import PayerPolicyRetrievalAgent
-from agents.types import SubmissionResult
+from agents.types import CodingResult, SubmissionResult
 from agents.voice_agent import VoiceIntakeAgent
 from knowledge_base.setup_kb import bootstrap_local_policy_store
 
@@ -43,6 +43,20 @@ class FakeBrowserAgent(BrowserAutomationAgent):
             reference="PA-TEST1234",
             review_snapshot=review_snapshot,
             payload=payload,
+        )
+
+
+class FakeInvalidNovaReasoningAgent(ClinicalReasoningAgent):
+    def __init__(self) -> None:
+        super().__init__(use_model=True)
+
+    def _map_codes_with_nova(self, extracted):  # type: ignore[override]
+        return CodingResult(
+            diagnosis_code="A00.0",
+            procedure_code="99999",
+            confidence=0.9,
+            rationale="Synthetic invalid model output for guardrail testing.",
+            source="nova",
         )
 
 
@@ -102,6 +116,17 @@ class TestPriorAuthPipeline(unittest.TestCase):
         self.assertEqual(
             result.submission.reference if result.submission else "", "PA-TEST1234")
         self.assertEqual(result.next_action, "notify_clinician")
+
+    def test_nova_output_is_guardrailed_when_codes_are_off_policy(self) -> None:
+        extracted = VoiceIntakeAgent().ingest(SAMPLE_TRANSCRIPT)
+        reasoning = FakeInvalidNovaReasoningAgent()
+
+        coding = reasoning.map_codes(extracted)
+
+        self.assertEqual(coding.procedure_code, "72148")
+        self.assertIn(coding.diagnosis_code, {"M54.16", "M54.17", "M51.26"})
+        self.assertEqual(coding.source, "nova_guardrailed")
+        self.assertIn("Guardrail adjustments:", coding.rationale)
 
     @unittest.skipUnless(
         os.getenv("RUN_BEDROCK_INTEGRATION_TESTS") == "1",
