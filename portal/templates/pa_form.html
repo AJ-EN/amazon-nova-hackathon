@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prior Authorization Request Portal</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 700px;
+        margin: 40px auto;
+        padding: 20px;
+      }
+      h1 {
+        color: #003087;
+        border-bottom: 2px solid #003087;
+        padding-bottom: 10px;
+      }
+      .section {
+        background: #f5f5f5;
+        padding: 20px;
+        margin: 20px 0;
+        border-radius: 8px;
+      }
+      label {
+        display: block;
+        margin-top: 12px;
+        font-weight: bold;
+        color: #333;
+      }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        padding: 8px;
+        margin-top: 4px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      textarea {
+        height: 100px;
+      }
+      button {
+        background: #003087;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-top: 20px;
+      }
+      button:hover {
+        background: #004db3;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🏥 Prior Authorization Request</h1>
+
+    <form id="paForm" action="/submit" method="POST">
+      <!-- Patient Information -->
+      <div class="section">
+        <h2>Patient Information</h2>
+        <label>Patient Full Name</label>
+        <input
+          type="text"
+          name="patient_name"
+          id="patient_name"
+          placeholder="Jane Doe"
+          required
+        />
+
+        <label>Date of Birth</label>
+        <input type="date" name="date_of_birth" id="date_of_birth" placeholder="MM/DD/YYYY" title="Date of Birth" required />
+
+        <label>Member ID</label>
+        <input
+          type="text"
+          name="member_id"
+          id="member_id"
+          placeholder="UHC-4429871"
+          required
+        />
+      </div>
+
+      <!-- Provider Information -->
+      <div class="section">
+        <h2>Provider Information</h2>
+        <label>Payer Name</label>
+        <input
+          type="text"
+          name="payer_name"
+          id="payer_name"
+          placeholder="UnitedHealthcare"
+          required
+        />
+
+        <label>Provider NPI Number</label>
+        <input
+          type="text"
+          name="provider_npi"
+          id="provider_npi"
+          placeholder="1234567890"
+          required
+        />
+      </div>
+
+      <!-- Clinical Information -->
+      <div class="section">
+        <h2>Clinical Information</h2>
+        <label>Requested Service</label>
+        <input
+          type="text"
+          name="requested_service"
+          id="requested_service"
+          placeholder="MRI lumbar spine without contrast"
+          required
+        />
+
+        <label>Facility Name</label>
+        <input
+          type="text"
+          name="facility_name"
+          id="facility_name"
+          placeholder="Demo Outpatient Center"
+          required
+        />
+
+        <label>Primary Diagnosis Code (ICD-10)</label>
+        <input
+          type="text"
+          name="diagnosis_code"
+          id="diagnosis_code"
+          placeholder="M54.17"
+          required
+        />
+
+        <label>Requested Procedure Code (CPT)</label>
+        <input
+          type="text"
+          name="procedure_code"
+          id="procedure_code"
+          placeholder="72148"
+          required
+        />
+
+        <label>Urgency Level</label>
+        <select name="urgency" id="urgency" title="Urgency Level">
+          <option value="routine">Routine (within 5 business days)</option>
+          <option value="urgent">Urgent (within 24 hours)</option>
+          <option value="emergent">Emergent (immediate)</option>
+        </select>
+
+        <label>Clinical Justification</label>
+        <textarea
+          name="clinical_justification"
+          id="clinical_justification"
+          placeholder="Describe medical necessity..."
+        ></textarea>
+
+        <label>Policy Identifier</label>
+        <input
+          type="text"
+          name="policy_id"
+          id="policy_id"
+          placeholder="UHC-LUMBAR-MRI-2026"
+        />
+
+        <label>Denial Risk Score</label>
+        <input
+          type="number"
+          name="denial_risk_score"
+          id="denial_risk_score"
+          min="0"
+          max="1"
+          step="0.01"
+          placeholder="0.22"
+        />
+      </div>
+
+      <button type="submit">Submit Prior Authorization Request</button>
+    </form>
+  </body>
+</html>
