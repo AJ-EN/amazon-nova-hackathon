@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import requests
 
 from agents.types import SubmissionResult
 
+# Typing delay range in ms — makes the demo look like a human typing
+_TYPE_DELAY_MIN = 30
+_TYPE_DELAY_MAX = 80
+
 
 class BrowserAutomationAgent:
     """
-    Dual-mode browser agent: real Nova Act automation or HTTP adapter fallback.
+    Tri-mode browser agent for portal form submission.
 
-    Controlled by USE_REAL_NOVA_ACT env var. Set to "1" for real browser
-    automation, leave unset or "0" for the HTTP adapter.
+    Modes (controlled by USE_BROWSER_AUTOMATION env var):
+      - "playwright"  → Real Chromium browser automation (visual demo)
+      - "nova_act"    → Nova Act browser automation (if API key available)
+      - unset / "0"   → HTTP adapter fallback (fast, for tests)
     """
 
     def __init__(
@@ -25,12 +32,14 @@ class BrowserAutomationAgent:
         self.portal_base_url = portal_base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max_attempts
-        self.use_real_nova_act = os.getenv("USE_REAL_NOVA_ACT", "0").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
-        self.browser_mode = "nova_act" if self.use_real_nova_act else "http_adapter"
+
+        mode = os.getenv("USE_BROWSER_AUTOMATION", "0").lower().strip()
+        if mode in {"playwright", "pw"}:
+            self.browser_mode = "playwright"
+        elif mode in {"nova_act", "nova", "1", "true", "yes"}:
+            self.browser_mode = "nova_act"
+        else:
+            self.browser_mode = "http_adapter"
 
     def generate_review_snapshot(self, payload: dict[str, str]) -> str:
         return (
@@ -59,9 +68,103 @@ class BrowserAutomationAgent:
                 payload=payload,
             )
 
-        if self.use_real_nova_act:
+        if self.browser_mode == "playwright":
+            return self._submit_with_playwright(payload, review_snapshot)
+        if self.browser_mode == "nova_act":
             return self._submit_with_nova_act(payload, review_snapshot)
         return self._submit_with_http_adapter(payload, review_snapshot)
+
+    # ------------------------------------------------------------------
+    # Playwright path — visual browser automation for demo
+    # ------------------------------------------------------------------
+
+    def _submit_with_playwright(
+        self,
+        payload: dict[str, str],
+        review_snapshot: str,
+    ) -> SubmissionResult:
+        """Launches a visible Chromium browser, fills the PA form field-by-field, and submits."""
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=False, slow_mo=120)
+                page = browser.new_page()
+                page.goto(f"{self.portal_base_url}/", wait_until="networkidle")
+
+                # Text input fields — type with human-like delay
+                field_map = {
+                    "#patient_name": payload.get("patient_name", ""),
+                    "#member_id": payload.get("member_id", ""),
+                    "#payer_name": payload.get("payer_name", ""),
+                    "#provider_npi": payload.get("provider_npi", ""),
+                    "#requested_service": payload.get("requested_service", ""),
+                    "#facility_name": payload.get("facility_name", ""),
+                    "#diagnosis_code": payload.get("diagnosis_code", ""),
+                    "#procedure_code": payload.get("procedure_code", ""),
+                    "#policy_id": payload.get("policy_id", ""),
+                    "#denial_risk_score": payload.get("denial_risk_score", ""),
+                }
+                for selector, value in field_map.items():
+                    if value:
+                        page.click(selector)
+                        page.fill(selector, "")
+                        page.type(selector, value, delay=_TYPE_DELAY_MIN)
+
+                # Date field — needs special handling (input type="date")
+                dob = payload.get("date_of_birth", "")
+                if dob:
+                    page.evaluate(
+                        f"document.querySelector('#date_of_birth').value = '{dob}'"
+                    )
+                    page.dispatch_event("#date_of_birth", "change")
+
+                # Select dropdown
+                urgency = payload.get("urgency", "routine")
+                page.select_option("#urgency", urgency)
+
+                # Textarea
+                justification = payload.get("clinical_justification", "")
+                if justification:
+                    page.click("#clinical_justification")
+                    page.fill("#clinical_justification", "")
+                    page.type(
+                        "#clinical_justification",
+                        justification,
+                        delay=_TYPE_DELAY_MIN,
+                    )
+
+                # Pause briefly so viewer can see the filled form
+                time.sleep(1.5)
+
+                # Submit
+                page.click("button[type='submit']")
+                page.wait_for_load_state("networkidle")
+
+                # Keep browser visible for a moment after submission
+                time.sleep(2)
+                browser.close()
+
+            return SubmissionResult(
+                status="submitted",
+                message="Prior authorization submitted via Playwright browser automation.",
+                reference=self._local_reference(),
+                review_snapshot=review_snapshot,
+                payload=payload,
+            )
+
+        except Exception as exc:
+            return SubmissionResult(
+                status="failed",
+                message=f"Playwright browser submission failed: {exc}",
+                reference="",
+                review_snapshot=review_snapshot,
+                payload=payload,
+            )
+
+    # ------------------------------------------------------------------
+    # Nova Act path — kept for when API key becomes available
+    # ------------------------------------------------------------------
 
     def _submit_with_nova_act(
         self,
@@ -130,6 +233,10 @@ class BrowserAutomationAgent:
                 review_snapshot=review_snapshot,
                 payload=payload,
             )
+
+    # ------------------------------------------------------------------
+    # HTTP adapter — fast fallback for tests and development
+    # ------------------------------------------------------------------
 
     def _submit_with_http_adapter(
         self,
