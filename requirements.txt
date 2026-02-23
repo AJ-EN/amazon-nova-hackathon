@@ -1,8 +1,23 @@
-boto3>=1.35.0          # AWS SDK — already installed, but pin the version
-flask>=3.0.0           # For the mock payer portal web app
-python-dotenv>=1.0.0   # For loading .env configuration
-strands-agents>=0.1.0  # AWS's official multi-agent framework
-nova-act>=0.1.0        # Nova Act browser automation SDK
-pyaudio>=0.2.14        # For capturing microphone input (Nova Sonic)
-websockets>=12.0       # For bidirectional streaming with Nova Sonic
-requests>=2.31.0       # HTTP requests utility
+# AWS SDK
+boto3>=1.35.0
+
+# Mock payer portal web server
+flask>=3.0.0
+
+# Non-credential environment configuration
+python-dotenv>=1.0.0
+
+# AWS multi-agent orchestration framework
+strands-agents>=0.1.0
+
+# Browser automation for payer portal form filling
+nova-act>=0.1.0
+
+# Microphone input capture for Nova Sonic
+pyaudio>=0.2.14
+
+# Bidirectional streaming for Nova Sonic
+websockets>=12.0
+
+# HTTP requests utility
+requests>=2.31.0
