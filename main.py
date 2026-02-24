@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 
 from agents.browser_agent import BrowserAutomationAgent
 from agents.orchestrator_factory import create_runtime_orchestrator, orchestrator_mode
@@ -13,6 +15,29 @@ DEFAULT_TRANSCRIPT = (
     "at our facility. She has been through six weeks of physical therapy with no improvement, "
     "has radiculopathy with L4-L5 disc herniation confirmed on X-ray."
 )
+
+
+def _configure_otel_console_exporter() -> None:
+    """Optional local OTel setup for CLI runs."""
+    enabled = os.getenv("ENABLE_OTEL_CONSOLE", "1").lower() in {"1", "true", "yes"}
+    if not enabled:
+        return
+
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    except Exception as exc:
+        logging.getLogger(__name__).warning("OpenTelemetry console export is unavailable: %s", exc)
+        return
+
+    current_provider = trace.get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        return
+
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +63,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _configure_otel_console_exporter()
     args = parse_args()
     bootstrap_local_policy_store()
 
