@@ -110,10 +110,19 @@ class TestPriorAuthPipeline(unittest.TestCase):
         extracted = agent.ingest(SAMPLE_TRANSCRIPT)
 
         self.assertEqual(extracted.patient_name, "Jane Doe")
+        self.assertEqual(extracted.date_of_birth, "1965-03-15")
         self.assertEqual(extracted.member_id, "UHC-4429871")
         self.assertEqual(extracted.payer_name, "UnitedHealthcare")
         self.assertEqual(extracted.conservative_therapy_weeks, 6)
         self.assertIn("Radiculopathy", extracted.clinical_findings)
+
+    def test_voice_intake_parses_comma_date_of_birth(self) -> None:
+        transcript = (
+            "I need a prior auth for Jane Doe, date of birth March 15, 1965, "
+            "member ID UHC-4429871."
+        )
+        extracted = VoiceIntakeAgent().ingest(transcript)
+        self.assertEqual(extracted.date_of_birth, "1965-03-15")
 
     def test_reasoning_and_retrieval_are_policy_grounded(self) -> None:
         voice = VoiceIntakeAgent()

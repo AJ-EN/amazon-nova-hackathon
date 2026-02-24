@@ -108,6 +108,10 @@ class TestPortalApi(unittest.TestCase):
 
         initial_final = self._wait_for_terminal_run(run_id)
         self.assertEqual(initial_final["summary"]["submission_status"], "needs_approval")
+        initial_trace = (initial_final.get("result") or {}).get("trace") or []
+        initial_voice_intake_count = sum(
+            1 for step in initial_trace if step.get("step") == "Voice Intake"
+        )
 
         approve_response = self.client.post(f"/api/runs/{run_id}/approve", json={})
         self.assertEqual(approve_response.status_code, 202)
@@ -117,6 +121,13 @@ class TestPortalApi(unittest.TestCase):
         approved_final = self._wait_for_terminal_run(run_id)
         self.assertIn(approved_final["summary"]["submission_status"], {"submitted", "failed"})
         self.assertTrue((approved_final.get("request") or {}).get("reviewer_approved"))
+        approved_trace = (approved_final.get("result") or {}).get("trace") or []
+        approved_voice_intake_count = sum(
+            1 for step in approved_trace if step.get("step") == "Voice Intake"
+        )
+        self.assertEqual(approved_voice_intake_count, initial_voice_intake_count)
+        self.assertGreaterEqual(len(approved_trace), len(initial_trace) + 2)
+        self.assertLessEqual(len(approved_trace), len(initial_trace) + 4)
 
 
 if __name__ == "__main__":

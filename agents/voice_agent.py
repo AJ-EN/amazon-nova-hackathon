@@ -73,12 +73,23 @@ class VoiceIntakeAgent:
 
     @staticmethod
     def _extract_date_of_birth(transcript: str) -> str:
-        dob_match = re.search(r"date of birth\s+([^,.;]+)", transcript, flags=re.IGNORECASE)
+        dob_match = re.search(
+            r"date of birth\s+([A-Za-z]+\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})",
+            transcript,
+            flags=re.IGNORECASE,
+        )
         if not dob_match:
             return ""
 
         raw = dob_match.group(1).strip()
-        for date_format in ("%B %d %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
+        for date_format in (
+            "%B %d %Y",
+            "%B %d, %Y",
+            "%b %d %Y",
+            "%b %d, %Y",
+            "%m/%d/%Y",
+            "%Y-%m-%d",
+        ):
             try:
                 return datetime.strptime(raw, date_format).date().isoformat()
             except ValueError:

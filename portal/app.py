@@ -197,21 +197,7 @@ def _run_workflow_async(
     _publish_event(run_id, "run_started")
 
     def trace_hook(step: WorkflowTraceStep) -> None:
-        with workflow_lock:
-            record = workflow_runs.get(run_id)
-            if record is None:
-                return
-            result = record.setdefault("result", {"trace": []})
-            trace = result.setdefault("trace", [])
-            trace.append(step.to_dict())
-            record["updated_at"] = _utc_now_iso()
-            record["summary"] = _summarize_run(
-                run_id=run_id,
-                result=result,
-                run_status=record.get("status", "running"),
-                error=record.get("error"),
-            )
-        _publish_event(run_id, "trace")
+        _record_trace_step(run_id=run_id, step=step)
 
     try:
         result_dict = _execute_workflow(
@@ -231,6 +217,138 @@ def _run_workflow_async(
             record["summary"] = _summarize_run(
                 run_id=run_id,
                 result=result_dict,
+                run_status="completed",
+                error=None,
+            )
+            record["error"] = None
+        _publish_event(run_id, "run_completed")
+    except Exception as exc:
+        with workflow_lock:
+            record = workflow_runs.get(run_id)
+            if record is None:
+                return
+            record["status"] = "failed"
+            record["updated_at"] = _utc_now_iso()
+            record["error"] = str(exc)
+            result = record.setdefault("result", {"trace": []})
+            record["summary"] = _summarize_run(
+                run_id=run_id,
+                result=result,
+                run_status="failed",
+                error=str(exc),
+            )
+        _publish_event(run_id, "run_failed")
+    finally:
+        _publish_event(run_id, "terminal")
+
+
+def _record_trace_step(run_id: str, step: WorkflowTraceStep) -> None:
+    with workflow_lock:
+        record = workflow_runs.get(run_id)
+        if record is None:
+            return
+        result = record.setdefault("result", {"trace": []})
+        trace = result.setdefault("trace", [])
+        trace.append(step.to_dict())
+        record["updated_at"] = _utc_now_iso()
+        record["summary"] = _summarize_run(
+            run_id=run_id,
+            result=result,
+            run_status=record.get("status", "running"),
+            error=record.get("error"),
+        )
+    _publish_event(run_id, "trace")
+
+
+def _run_cached_submission_async(
+    run_id: str,
+    payload: dict[str, str],
+    review_snapshot: str,
+    portal_url: str,
+) -> None:
+    with workflow_lock:
+        record = workflow_runs.get(run_id)
+        if record is None:
+            return
+        record["status"] = "running"
+        record["updated_at"] = _utc_now_iso()
+        record["summary"] = _summarize_run(
+            run_id=run_id,
+            result=record.get("result", {}),
+            run_status="running",
+            error=record.get("error"),
+        )
+    _publish_event(run_id, "run_started")
+
+    try:
+        _record_trace_step(
+            run_id,
+            WorkflowTraceStep(
+                step="Human Review",
+                status="completed",
+                detail="approved=True.",
+            ),
+        )
+        _record_trace_step(
+            run_id,
+            WorkflowTraceStep(
+                step="Portal Submission",
+                status="in_progress",
+                detail="Executing cached payload submission.",
+            ),
+        )
+
+        browser_agent = BrowserAutomationAgent(portal_base_url=portal_url)
+        submission = browser_agent.submit(
+            payload=payload,
+            approved=True,
+            review_snapshot=review_snapshot,
+        )
+
+        if submission.status == "submitted":
+            _record_trace_step(
+                run_id,
+                WorkflowTraceStep(
+                    step="Portal Submission",
+                    status="completed",
+                    detail=f"Submitted successfully with reference {submission.reference}.",
+                ),
+            )
+            next_action = "notify_clinician"
+        elif submission.status == "needs_approval":
+            _record_trace_step(
+                run_id,
+                WorkflowTraceStep(
+                    step="Portal Submission",
+                    status="blocked",
+                    detail="Submission still requires approval.",
+                ),
+            )
+            next_action = "human_review_required"
+        else:
+            _record_trace_step(
+                run_id,
+                WorkflowTraceStep(
+                    step="Portal Submission",
+                    status="failed",
+                    detail=submission.message,
+                ),
+            )
+            next_action = "retry_submission"
+
+        with workflow_lock:
+            record = workflow_runs.get(run_id)
+            if record is None:
+                return
+            result = record.setdefault("result", {"trace": []})
+            result["submission"] = submission.to_dict()
+            result["browser_mode"] = browser_agent.browser_mode
+            result["next_action"] = next_action
+            record["status"] = "completed"
+            record["updated_at"] = _utc_now_iso()
+            record["summary"] = _summarize_run(
+                run_id=run_id,
+                result=result,
                 run_status="completed",
                 error=None,
             )
@@ -295,16 +413,20 @@ def submit_pa():
         "denial_risk_score": request.form.get("denial_risk_score"),
         "urgency": request.form.get("urgency"),
     }
-    submitted_requests.append(data)
+    with workflow_lock:
+        submitted_requests.append(data)
+        reference = f"PA-{len(submitted_requests):04d}"
     print(
         f"PA Request received: {data['patient_name']} - {data['procedure_code']}")
-    return jsonify({"status": "submitted", "reference": f"PA-{len(submitted_requests):04d}"})
+    return jsonify({"status": "submitted", "reference": reference})
 
 
 @app.route("/requests")
 def view_requests():
     """Simple admin view to see submitted PA requests."""
-    return jsonify(submitted_requests)
+    with workflow_lock:
+        requests_snapshot = deepcopy(submitted_requests)
+    return jsonify(requests_snapshot)
 
 
 @app.route("/api/runs", methods=["GET"])
@@ -456,36 +578,39 @@ def approve_run(run_id: str):
                 409,
             )
 
-        req = record.setdefault("request", {})
-        transcript = str(req.get("transcript", "")).strip()
-        if not transcript:
-            return jsonify({"error": "transcript_missing_for_approval"}), 400
+        cached_payload = submission.get("payload")
+        if not isinstance(cached_payload, dict) or not cached_payload:
+            return jsonify({"error": "cached_payload_missing"}), 409
 
-        portal_url = str(req.get("portal_url", "")
+        payload = {
+            str(key): "" if value is None else str(value)
+            for key, value in cached_payload.items()
+        }
+        review_snapshot = str(submission.get("review_snapshot", "")).strip()
+        portal_url = str((record.get("request") or {}).get("portal_url", "")
                          ).strip() or request.host_url.rstrip("/")
-        auto_approve = bool(req.get("auto_approve", False))
+
+        req = record.setdefault("request", {})
         req["reviewer_approved"] = True
 
         record["status"] = "queued"
         record["error"] = None
         record["updated_at"] = _utc_now_iso()
-        record["result"] = {"trace": []}
         record["summary"] = _summarize_run(
             run_id=run_id,
-            result=record["result"],
+            result=record.get("result", {}),
             run_status="queued",
             error=None,
         )
         response_payload = deepcopy(record)
 
     worker = threading.Thread(
-        target=_run_workflow_async,
+        target=_run_cached_submission_async,
         kwargs={
             "run_id": run_id,
-            "transcript": transcript,
-            "auto_approve": auto_approve,
+            "payload": payload,
+            "review_snapshot": review_snapshot,
             "portal_url": portal_url,
-            "reviewer_approved": True,
         },
         daemon=True,
     )
@@ -498,10 +623,11 @@ def approve_run(run_id: str):
 def health():
     with workflow_lock:
         run_count = len(workflow_run_order)
+        submitted_count = len(submitted_requests)
     return jsonify(
         {
             "status": "ok",
-            "submitted_count": len(submitted_requests),
+            "submitted_count": submitted_count,
             "workflow_runs_count": run_count,
         }
     )
