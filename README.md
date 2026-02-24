@@ -2,6 +2,12 @@
 
 Voice-first prior authorization workflow that converts clinician speech into a structured PA submission package with a human review gate before portal submission.
 
+## System Architecture
+
+Judge-facing architecture documentation (components, sequence, Nova/Bedrock integration, and observability):
+
+- [System Architecture](docs/system-architecture.md)
+
 ## What is implemented now
 
 - Voice intake parser that extracts patient and clinical context from transcript text.
