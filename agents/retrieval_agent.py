@@ -4,10 +4,15 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 from agents.types import PolicyMatch
 from knowledge_base.setup_kb import DEFAULT_POLICIES, DEFAULT_POLICIES_PATH
+
+
+class BedrockAgentRuntimeClient(Protocol):
+    def retrieve(self, **kwargs: Any) -> dict[str, Any]:
+        ...
 
 
 class PayerPolicyRetrievalAgent:
@@ -23,13 +28,13 @@ class PayerPolicyRetrievalAgent:
         self,
         policy_path: Path | None = None,
         kb_id: str | None = None,
-        kb_client: Any | None = None,
+        kb_client: BedrockAgentRuntimeClient | None = None,
     ) -> None:
         self.policy_path = policy_path or DEFAULT_POLICIES_PATH
         self._policies: list[dict[str, Any]] | None = None
         self.kb_id = kb_id if kb_id is not None else self._resolve_kb_id()
         self.retrieval_source = "bedrock_kb" if self.kb_id else "local"
-        self._kb_client = kb_client
+        self._kb_client: BedrockAgentRuntimeClient | None = kb_client
 
     def _resolve_kb_id(self) -> str:
         env_kb_id = os.getenv("BEDROCK_KB_ID", "").strip()
@@ -98,13 +103,16 @@ class PayerPolicyRetrievalAgent:
         requested_service: str,
     ) -> PolicyMatch:
         self._ensure_kb_client()
+        kb_client = self._kb_client
+        if kb_client is None:
+            raise RuntimeError("Bedrock agent runtime client failed to initialize.")
 
         query = (
             f"Prior authorization policy for {payer_name} member {member_id} "
             f"requesting {requested_service} with procedure code {procedure_code}"
         )
 
-        response = self._kb_client.retrieve(
+        response = kb_client.retrieve(
             knowledgeBaseId=self.kb_id,
             retrievalQuery={"text": query},
             retrievalConfiguration={
@@ -363,7 +371,10 @@ class PayerPolicyRetrievalAgent:
     def _ensure_kb_client(self) -> None:
         if self._kb_client is None:
             from utils.bedrock_client import get_bedrock_agent_runtime_client
-            self._kb_client = get_bedrock_agent_runtime_client()
+            self._kb_client = cast(
+                BedrockAgentRuntimeClient,
+                get_bedrock_agent_runtime_client(),
+            )
 
     # ------------------------------------------------------------------
     # Local policy retrieval (offline fallback)

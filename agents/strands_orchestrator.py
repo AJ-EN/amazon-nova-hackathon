@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar, cast
 
 from opentelemetry import trace
 
@@ -21,18 +21,24 @@ from agents.types import (
 from agents.voice_agent import VoiceIntakeAgent
 
 try:
-    from strands import Agent, tool
+    from strands import Agent, tool as _strands_tool
     from strands.models import BedrockModel
 
     _STRANDS_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - exercised by runtime fallback.
     Agent = None  # type: ignore[assignment]
     BedrockModel = None  # type: ignore[assignment]
-
-    def tool(func):  # type: ignore[no-redef]
-        return func
+    _strands_tool = None
 
     _STRANDS_IMPORT_ERROR = exc
+
+_ToolFunc = TypeVar("_ToolFunc", bound=Callable[..., Any])
+
+
+def _decorate_tool(func: _ToolFunc) -> _ToolFunc:
+    if _strands_tool is None:
+        return func
+    return cast(_ToolFunc, _strands_tool(func))
 
 
 def strands_available() -> bool:
@@ -54,20 +60,20 @@ class _WorkflowTools:
         self.reasoning_agent = reasoning_agent
         self.browser_agent = browser_agent
 
-    @tool
+    @_decorate_tool
     def extract_clinical_data(self, transcript: str) -> str:
         """Extract structured patient and clinical details from transcript text."""
         extracted = self.voice_agent.ingest(transcript)
         return json.dumps(extracted.to_dict())
 
-    @tool
+    @_decorate_tool
     def map_clinical_codes(self, extracted_data: dict[str, Any]) -> str:
         """Map ICD-10 and CPT codes from extracted clinical context."""
         extracted = ExtractedClinicalData(**extracted_data)
         coding = self.reasoning_agent.map_codes(extracted)
         return json.dumps(coding.to_dict())
 
-    @tool
+    @_decorate_tool
     def retrieve_payer_policy(
         self,
         payer_name: str,
@@ -84,7 +90,7 @@ class _WorkflowTools:
         )
         return json.dumps(policy.to_dict())
 
-    @tool
+    @_decorate_tool
     def evaluate_necessity(
         self,
         extracted_data: dict[str, Any],
@@ -98,7 +104,7 @@ class _WorkflowTools:
         necessity = self.reasoning_agent.evaluate_medical_necessity(extracted, coding, policy)
         return json.dumps(necessity.to_dict())
 
-    @tool
+    @_decorate_tool
     def build_submission_payload(
         self,
         extracted_data: dict[str, Any],
@@ -114,13 +120,13 @@ class _WorkflowTools:
         payload = self.reasoning_agent.build_form_payload(extracted, coding, necessity, policy)
         return json.dumps(payload)
 
-    @tool
+    @_decorate_tool
     def generate_review_snapshot(self, payload: dict[str, str]) -> str:
         """Generate human-review summary for HITL approval."""
         snapshot = self.browser_agent.generate_review_snapshot(payload)
         return json.dumps({"review_snapshot": snapshot})
 
-    @tool
+    @_decorate_tool
     def submit_form(
         self,
         payload: dict[str, str],
@@ -207,7 +213,9 @@ class StrandsPriorAuthOrchestrator:
         name: str,
         description: str,
         tools: list[Any],
-    ) -> Agent:
+    ) -> Any:
+        if Agent is None or BedrockModel is None:
+            raise RuntimeError("Strands SDK is unavailable in this environment.")
         return Agent(
             model=BedrockModel(model_id=self.model_id),
             tools=tools,

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Protocol, cast
 
 from agents.types import (
     CodingResult,
@@ -17,6 +17,11 @@ from utils.bedrock_client import get_bedrock_client
 ICD10_PATTERN = re.compile(r"^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$")
 CPT_PATTERN = re.compile(r"^\d{5}$")
 logger = logging.getLogger(__name__)
+
+
+class BedrockRuntimeClient(Protocol):
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        ...
 
 
 class ClinicalReasoningAgent:
@@ -51,7 +56,7 @@ class ClinicalReasoningAgent:
             extended_thinking_toggle if prefer_extended_thinking is None else prefer_extended_thinking
         )
         self.require_model_success = require_model_success
-        self._runtime_client = None
+        self._runtime_client: BedrockRuntimeClient | None = None
 
     def map_codes(self, extracted: ExtractedClinicalData) -> CodingResult:
         if self.use_model:
@@ -150,6 +155,9 @@ class ClinicalReasoningAgent:
 
     def _map_codes_with_nova(self, extracted: ExtractedClinicalData) -> CodingResult:
         self._ensure_runtime_client()
+        runtime_client = self._runtime_client
+        if runtime_client is None:
+            raise RuntimeError("Bedrock runtime client failed to initialize.")
 
         system_prompt = (
             "You are a medical coding assistant for prior authorization workflows. "
@@ -165,7 +173,7 @@ class ClinicalReasoningAgent:
             "Respond with JSON only."
         )
 
-        response = self._runtime_client.converse(
+        response = runtime_client.converse(
             modelId=self.model_id,
             system=[{"text": system_prompt}],
             messages=[{"role": "user", "content": [{"text": user_prompt}]}],
@@ -255,6 +263,9 @@ class ClinicalReasoningAgent:
         denial_risk_score: float,
     ) -> tuple[str, bool]:
         self._ensure_runtime_client()
+        runtime_client = self._runtime_client
+        if runtime_client is None:
+            raise RuntimeError("Bedrock runtime client failed to initialize.")
         status = "meets" if meets_criteria else "partially meets"
         satisfied_text = "; ".join(satisfied) if satisfied else "None"
         missing_text = "; ".join(missing) if missing else "None"
@@ -302,7 +313,7 @@ class ClinicalReasoningAgent:
                 }
             }
             try:
-                response = self._runtime_client.converse(**extended_payload)
+                response = runtime_client.converse(**extended_payload)
                 extended_thinking_fired = True
             except Exception as exc:
                 logger.warning(
@@ -312,7 +323,7 @@ class ClinicalReasoningAgent:
                 response = None
 
         if response is None:
-            response = self._runtime_client.converse(**request_payload)
+            response = runtime_client.converse(**request_payload)
 
         text = self._extract_text_from_converse(response)
         if not text:
@@ -332,7 +343,7 @@ class ClinicalReasoningAgent:
 
     def _ensure_runtime_client(self) -> None:
         if self._runtime_client is None:
-            self._runtime_client = get_bedrock_client()
+            self._runtime_client = cast(BedrockRuntimeClient, get_bedrock_client())
 
     def _apply_coding_guardrails(
         self,

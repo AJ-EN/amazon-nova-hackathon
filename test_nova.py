@@ -118,7 +118,10 @@ class TestPriorAuthPipeline(unittest.TestCase):
     def test_reasoning_and_retrieval_are_policy_grounded(self) -> None:
         voice = VoiceIntakeAgent()
         retrieval = PayerPolicyRetrievalAgent()
-        reasoning = ClinicalReasoningAgent()
+        reasoning = ClinicalReasoningAgent(
+            use_model=False,
+            use_model_justification=False,
+        )
 
         extracted = voice.ingest(SAMPLE_TRANSCRIPT)
         coding = reasoning.map_codes(extracted)
