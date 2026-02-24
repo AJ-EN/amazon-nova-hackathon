@@ -172,6 +172,7 @@ class PayerPolicyRetrievalAgent:
         return text.strip() if isinstance(text, str) else ""
 
     def _parse_policy_from_kb_text(self, kb_text: str) -> PolicyMatch:
+        kb_text = self._normalize_kb_text(kb_text)
         policy_id = self._extract_header_field(kb_text, "Policy ID")
         payer_name = self._extract_header_field(kb_text, "Payer")
         title = self._extract_header_field(kb_text, "Title")
@@ -206,6 +207,40 @@ class PayerPolicyRetrievalAgent:
             required_documents=required_documents,
             denial_patterns=denial_patterns,
         )
+
+    @staticmethod
+    def _normalize_kb_text(kb_text: str) -> str:
+        """Insert line breaks before known header patterns so parsers work on single-line KB chunks."""
+        if "\n" in kb_text and len(kb_text.splitlines()) > 3:
+            return kb_text  # already multi-line
+
+        # Headers that should start on a new line
+        headers = [
+            r"Policy ID:",
+            r"Payer:",
+            r"Member ID Prefixes:",
+            r"Title:",
+            r"Covered Procedure Codes:",
+            r"Service Keywords:",
+            r"Medical Necessity Criteria\s*\(",
+            r"Required Documents:",
+            r"Common Denial Patterns:",
+        ]
+        # Also break before numbered items like "1. criterion_id:"
+        headers.append(r"\d+\.\s+[a-zA-Z_]+:")
+        # And bullet items "- item"
+        headers.append(r"-\s+\S")
+
+        for h in headers:
+            kb_text = re.sub(rf"\s+({h})", r"\n\1", kb_text)
+
+        # Ensure numbered criteria start on their own line even when
+        # attached to the "Medical Necessity Criteria (...met):" header.
+        kb_text = re.sub(
+            r"(must be met\):\s*)", r"\1\n", kb_text, flags=re.IGNORECASE
+        )
+
+        return kb_text.strip()
 
     @staticmethod
     def _extract_header_field(kb_text: str, field_name: str) -> str:

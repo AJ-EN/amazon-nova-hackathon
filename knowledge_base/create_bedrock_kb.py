@@ -28,7 +28,7 @@ ACCOUNT_ID = None  # resolved at runtime
 BUCKET_NAME = "priorauth-agent-kb-617903186897"
 KB_NAME = "priorauth-payer-policies"
 KB_DESCRIPTION = "Payer-specific prior authorization policy criteria for medical necessity evaluation."
-EMBEDDING_MODEL_ARN = f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0"
+EMBEDDING_MODEL_ARN = f"arn:aws:bedrock:{REGION}::foundation-model/amazon.titan-embed-text-v2:0"
 ROLE_NAME = "PriorAuthKBBedrockRole"
 COLLECTION_NAME = "priorauth-policies"
 INDEX_NAME = "bedrock-knowledge-base-default-index"
@@ -264,7 +264,7 @@ def create_opensearch_collection(aoss) -> str:
                 else:
                     raise
 
-            return collection_arn
+            return collection_arn, details.get("collectionEndpoint", "")
         if status == "FAILED":
             print(f"[AOSS] Collection FAILED")
             sys.exit(1)
@@ -273,6 +273,64 @@ def create_opensearch_collection(aoss) -> str:
 
     print("[AOSS] Timed out waiting for collection")
     sys.exit(1)
+
+
+def create_vector_index(collection_endpoint: str) -> None:
+    """Create the vector index in OpenSearch Serverless if it doesn't exist."""
+    from opensearchpy import OpenSearch, RequestsHttpConnection
+    from requests_aws4auth import AWS4Auth
+
+    credentials = boto3.Session().get_credentials().get_frozen_credentials()
+    awsauth = AWS4Auth(
+        credentials.access_key,
+        credentials.secret_key,
+        REGION,
+        "aoss",
+        session_token=credentials.token,
+    )
+
+    # Strip https:// for the host
+    host = collection_endpoint.replace("https://", "")
+    client = OpenSearch(
+        hosts=[{"host": host, "port": 443}],
+        http_auth=awsauth,
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+        timeout=300,
+    )
+
+    # Check if index already exists
+    if client.indices.exists(index=INDEX_NAME):
+        print(f"[AOSS] Index already exists: {INDEX_NAME}")
+        return
+
+    index_body = {
+        "settings": {
+            "index.knn": True,
+        },
+        "mappings": {
+            "properties": {
+                "bedrock-knowledge-base-default-vector": {
+                    "type": "knn_vector",
+                    "dimension": 1024,
+                    "method": {
+                        "engine": "faiss",
+                        "name": "hnsw",
+                        "parameters": {},
+                    },
+                },
+                "AMAZON_BEDROCK_TEXT_CHUNK": {"type": "text"},
+                "AMAZON_BEDROCK_METADATA": {"type": "text"},
+            }
+        },
+    }
+
+    print(f"[AOSS] Creating vector index: {INDEX_NAME}")
+    client.indices.create(index=INDEX_NAME, body=index_body)
+    print(f"[AOSS] Index created: {INDEX_NAME}")
+    print("[AOSS] Waiting for index propagation...")
+    time.sleep(30)  # wait for index to propagate
 
 
 # ── Bedrock KB ──────────────────────────────────────────────────────
@@ -286,7 +344,7 @@ def create_knowledge_base(bedrock_agent, role_arn: str, collection_arn: str) -> 
             return kb_id
 
     print(f"[KB] Creating: {KB_NAME}")
-    response = bedrock_agent.create_knowledge_base(
+    kb_config = dict(
         name=KB_NAME,
         description=KB_DESCRIPTION,
         roleArn=role_arn,
@@ -312,6 +370,23 @@ def create_knowledge_base(bedrock_agent, role_arn: str, collection_arn: str) -> 
             },
         },
     )
+
+    # Retry loop — AOSS index may take time to become visible to Bedrock
+    response = None
+    for attempt in range(6):
+        try:
+            response = bedrock_agent.create_knowledge_base(**kb_config)
+            break
+        except ClientError as e:
+            if "no such index" in str(e).lower() and attempt < 5:
+                print(f"  Index not yet visible, retrying in 15s (attempt {attempt + 1}/6)...")
+                time.sleep(15)
+            else:
+                raise
+
+    if response is None:
+        print("[KB] Failed to create knowledge base after retries")
+        sys.exit(1)
 
     kb_id = response["knowledgeBase"]["knowledgeBaseId"]
     print(f"[KB] Created: {kb_id}")
@@ -420,7 +495,10 @@ def main() -> None:
     role_arn = create_iam_role(iam)
 
     # Step 3: OpenSearch Serverless
-    collection_arn = create_opensearch_collection(aoss)
+    collection_arn, collection_endpoint = create_opensearch_collection(aoss)
+
+    # Step 3b: Create vector index in the collection
+    create_vector_index(collection_endpoint)
 
     # Step 4: Bedrock KB
     kb_id = create_knowledge_base(bedrock_agent, role_arn, collection_arn)
