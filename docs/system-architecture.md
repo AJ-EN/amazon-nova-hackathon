@@ -16,7 +16,7 @@ flowchart LR
     U --> F[Mock Payer Form UI<br/>portal/templates/pa_form.html]
 
     D --> API[Flask Control Plane<br/>portal/app.py]
-    API --> SSE[SSE Stream<br/>/api/runs/{id}/events]
+    API --> SSE["SSE Stream<br/>/api/runs/:run_id/events"]
     SSE --> D
 
     API --> RUNS[(In-memory Run Store<br/>workflow_runs)]
@@ -32,7 +32,7 @@ flowchart LR
     REASON --> NOVA_RUNTIME[(Bedrock Runtime<br/>Nova Lite Converse)]
     RETRIEVE --> KB_RUNTIME[(Bedrock Agent Runtime<br/>Knowledge Base Retrieve)]
     RETRIEVE --> LOCAL_POLICIES[(Local Policies JSON)]
-    BROWSER --> SUBMIT[/POST /submit<br/>mock payer portal/]
+    BROWSER --> SUBMIT["POST /submit<br/>mock payer portal"]
 
     KB_RUNTIME --> KB[(Bedrock Knowledge Base ID)]
     KB --> AOSS[(OpenSearch Serverless Vector Index)]
@@ -75,7 +75,7 @@ sequenceDiagram
     API-->>UI: SSE updates + terminal state
 
     User->>UI: Approve & Submit
-    UI->>API: POST /api/runs/{run_id}/approve
+    UI->>API: POST /api/runs/:run_id/approve
     API->>Orch: rerun(reviewer_approved=true)
     Orch->>Browser: submit(approved=true)
     Browser-->>Orch: submitted/failed + reference
