@@ -292,7 +292,10 @@ class ClinicalReasoningAgent:
         if self.prefer_extended_thinking:
             extended_payload = dict(request_payload)
             extended_payload["additionalModelRequestFields"] = {
-                "reasoningConfig": {"budgetTokens": 512}
+                "reasoningConfig": {
+                    "type": "enabled",
+                    "maxReasoningEffort": "medium",
+                }
             }
             try:
                 response = self._runtime_client.converse(**extended_payload)

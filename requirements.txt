@@ -10,14 +10,19 @@ python-dotenv>=1.0.0
 # AWS multi-agent orchestration framework
 strands-agents>=0.1.0
 
-# Browser automation for payer portal form filling
-nova-act>=0.1.0
-
-# Microphone input capture for Nova Sonic
-pyaudio>=0.2.14
-
-# Bidirectional streaming for Nova Sonic
-websockets>=12.0
+# Browser automation for payer portal form filling (visual demo mode)
+playwright>=1.40.0
 
 # HTTP requests utility
 requests>=2.31.0
+
+# OpenSearch client for Bedrock KB vector index setup
+opensearch-py>=2.4.0
+
+# AWS SigV4 auth for OpenSearch Serverless
+requests-aws4auth>=1.2.0
+
+# --- Optional (not installed by default) ---
+# nova-act>=0.1.0        # Nova Act browser automation (requires API key)
+# pyaudio>=0.2.14        # Microphone capture for Nova Sonic (requires portaudio system lib)
+# websockets>=12.0       # Bidirectional streaming for Nova Sonic

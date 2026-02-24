@@ -117,6 +117,33 @@ python main.py
 
 `USE_NOVA_EXTENDED_THINKING=1` is enabled by default for the justification call and automatically falls back to standard inference if unsupported.
 
+### Browser automation mode
+
+Control how the agent submits to the payer portal with `USE_BROWSER_AUTOMATION`:
+
+```bash
+# HTTP adapter (default — fast, for tests and CI)
+python main.py --auto-approve
+
+# Playwright — launches visible Chromium, fills form field-by-field (visual demo)
+USE_BROWSER_AUTOMATION=playwright python main.py --auto-approve
+
+# Nova Act — real Nova Act browser agent (requires nova-act package + API key)
+USE_BROWSER_AUTOMATION=nova_act python main.py --auto-approve
+```
+
+### Environment variables reference
+
+| Variable | Default | Description |
+| ---- | ---- | ---- |
+| `USE_BROWSER_AUTOMATION` | `0` | Browser mode: `playwright`, `nova_act`, or `0` (HTTP adapter) |
+| `BEDROCK_KB_ID` | _(auto from kb_config.json)_ | Bedrock Knowledge Base ID for RAG retrieval |
+| `USE_NOVA_REASONING` | `0` | Enable Nova-backed ICD-10/CPT coding |
+| `NOVA_REASONING_MODEL_ID` | `amazon.nova-lite-v1:0` | Model for clinical coding |
+| `USE_NOVA_JUSTIFICATION` | `0` | Enable Nova-backed justification generation |
+| `NOVA_JUSTIFICATION_MODEL_ID` | `amazon.nova-lite-v1:0` | Model for justification prose |
+| `USE_NOVA_EXTENDED_THINKING` | `1` | Enable extended thinking for justification |
+
 ## Next integration steps for hackathon depth
 
 1. Replace transcript parser with Nova 2 Sonic Bidi streaming + async tool calls.
