@@ -4,6 +4,8 @@ import json
 import os
 from typing import Any, Callable
 
+from opentelemetry import trace
+
 from agents.browser_agent import BrowserAutomationAgent
 from agents.reasoning_agent import ClinicalReasoningAgent
 from agents.retrieval_agent import PayerPolicyRetrievalAgent
@@ -249,12 +251,13 @@ class StrandsPriorAuthOrchestrator:
         reviewer_approved: bool | None = None,
         trace_hook: Callable[[WorkflowTraceStep], None] | None = None,
     ) -> PriorAuthWorkflowResult:
-        trace: list[WorkflowTraceStep] = []
-        result = PriorAuthWorkflowResult(trace=trace)
+        tracer = trace.get_tracer("priorauth.strands.orchestrator")
+        workflow_trace: list[WorkflowTraceStep] = []
+        result = PriorAuthWorkflowResult(trace=workflow_trace)
 
         def emit(step: str, status: str, detail: str) -> None:
             self._add_trace(
-                trace=trace,
+                trace=workflow_trace,
                 step=step,
                 status=status,
                 detail=detail,
@@ -262,9 +265,13 @@ class StrandsPriorAuthOrchestrator:
             )
 
         emit("Voice Intake", "in_progress", "Parsing clinician transcript.")
-        extracted_payload = self._tool_json(
-            self.intake_stage.tool.extract_clinical_data(transcript=transcript)
-        )
+        with tracer.start_as_current_span("voice_intake") as span:
+            span.set_attribute("transcript_length", len(transcript))
+            extracted_payload = self._tool_json(
+                self.intake_stage.tool.extract_clinical_data(transcript=transcript)
+            )
+            span.set_attribute("patient_name", str(extracted_payload.get("patient_name", "")))
+            span.set_attribute("payer_name", str(extracted_payload.get("payer_name", "")))
         extracted = ExtractedClinicalData(**extracted_payload)
         result.extracted_data = extracted
         emit(
@@ -274,14 +281,17 @@ class StrandsPriorAuthOrchestrator:
         )
 
         emit("Eligibility Verification", "in_progress", "Checking required identifiers.")
-        if not extracted.member_id:
-            emit(
-                "Eligibility Verification",
-                "failed",
-                "Missing member ID from intake transcript.",
-            )
-            result.next_action = "collect_missing_member_id"
-            return result
+        with tracer.start_as_current_span("eligibility_verification") as span:
+            member_id_present = bool(extracted.member_id)
+            span.set_attribute("member_id_present", member_id_present)
+            if not member_id_present:
+                emit(
+                    "Eligibility Verification",
+                    "failed",
+                    "Missing member ID from intake transcript.",
+                )
+                result.next_action = "collect_missing_member_id"
+                return result
         emit(
             "Eligibility Verification",
             "completed",
@@ -289,9 +299,12 @@ class StrandsPriorAuthOrchestrator:
         )
 
         emit("Clinical Coding", "in_progress", "Mapping ICD-10 and CPT codes.")
-        coding_payload = self._tool_json(
-            self.coding_stage.tool.map_clinical_codes(extracted_data=extracted.to_dict())
-        )
+        with tracer.start_as_current_span("clinical_coding") as span:
+            coding_payload = self._tool_json(
+                self.coding_stage.tool.map_clinical_codes(extracted_data=extracted.to_dict())
+            )
+            span.set_attribute("diagnosis_code", str(coding_payload.get("diagnosis_code", "")))
+            span.set_attribute("procedure_code", str(coding_payload.get("procedure_code", "")))
         coding = CodingResult(**coding_payload)
         result.coding = coding
         emit(
@@ -301,14 +314,16 @@ class StrandsPriorAuthOrchestrator:
         )
 
         emit("Knowledge Retrieval", "in_progress", "Fetching payer policy criteria.")
-        policy_payload = self._tool_json(
-            self.retrieval_stage.tool.retrieve_payer_policy(
-                payer_name=extracted.payer_name,
-                member_id=extracted.member_id,
-                procedure_code=coding.procedure_code,
-                requested_service=extracted.requested_service,
+        with tracer.start_as_current_span("knowledge_retrieval") as span:
+            policy_payload = self._tool_json(
+                self.retrieval_stage.tool.retrieve_payer_policy(
+                    payer_name=extracted.payer_name,
+                    member_id=extracted.member_id,
+                    procedure_code=coding.procedure_code,
+                    requested_service=extracted.requested_service,
+                )
             )
-        )
+            span.set_attribute("policy_id", str(policy_payload.get("policy_id", "")))
         policy = PolicyMatch(**policy_payload)
         result.policy = policy
         emit(
@@ -318,13 +333,19 @@ class StrandsPriorAuthOrchestrator:
         )
 
         emit("Medical Necessity Analysis", "in_progress", "Evaluating policy criteria.")
-        necessity_payload = self._tool_json(
-            self.necessity_stage.tool.evaluate_necessity(
-                extracted_data=extracted.to_dict(),
-                coding_data=coding.to_dict(),
-                policy_data=policy.to_dict(),
+        with tracer.start_as_current_span("medical_necessity") as span:
+            necessity_payload = self._tool_json(
+                self.necessity_stage.tool.evaluate_necessity(
+                    extracted_data=extracted.to_dict(),
+                    coding_data=coding.to_dict(),
+                    policy_data=policy.to_dict(),
+                )
             )
-        )
+            span.set_attribute("meets_criteria", bool(necessity_payload.get("meets_criteria", False)))
+            span.set_attribute(
+                "extended_thinking_used",
+                bool(necessity_payload.get("extended_thinking_used", False)),
+            )
         necessity = NecessityDecision(**necessity_payload)
         result.necessity = necessity
         emit(
@@ -334,32 +355,39 @@ class StrandsPriorAuthOrchestrator:
         )
 
         emit("Form Population", "in_progress", "Building PA submission payload.")
-        payload = self._tool_json(
-            self.payload_stage.tool.build_submission_payload(
-                extracted_data=extracted.to_dict(),
-                coding_data=coding.to_dict(),
-                necessity_data=necessity.to_dict(),
-                policy_data=policy.to_dict(),
+        with tracer.start_as_current_span("form_population") as span:
+            payload = self._tool_json(
+                self.payload_stage.tool.build_submission_payload(
+                    extracted_data=extracted.to_dict(),
+                    coding_data=coding.to_dict(),
+                    necessity_data=necessity.to_dict(),
+                    policy_data=policy.to_dict(),
+                )
             )
-        )
+            span.set_attribute("payload_fields", len(payload))
         emit("Form Population", "completed", "Payload built for browser automation.")
 
         emit("Human Review", "in_progress", "Preparing approval snapshot.")
-        snapshot_payload = self._tool_json(
-            self.review_stage.tool.generate_review_snapshot(payload=payload)
-        )
-        review_snapshot = str(snapshot_payload.get("review_snapshot", "")).strip()
         approved = reviewer_approved if reviewer_approved is not None else auto_approve
+        with tracer.start_as_current_span("human_review") as span:
+            span.set_attribute("approved", approved)
+            snapshot_payload = self._tool_json(
+                self.review_stage.tool.generate_review_snapshot(payload=payload)
+            )
+            review_snapshot = str(snapshot_payload.get("review_snapshot", "")).strip()
         emit("Human Review", "completed", f"approved={approved}.")
 
         emit("Portal Submission", "in_progress", "Executing portal form submission.")
-        submission_payload = self._tool_json(
-            self.submission_stage.tool.submit_form(
-                payload=payload,
-                approved=approved,
-                review_snapshot=review_snapshot,
+        with tracer.start_as_current_span("portal_submission") as span:
+            submission_payload = self._tool_json(
+                self.submission_stage.tool.submit_form(
+                    payload=payload,
+                    approved=approved,
+                    review_snapshot=review_snapshot,
+                )
             )
-        )
+            span.set_attribute("submission_status", str(submission_payload.get("status", "")))
+            span.set_attribute("submission_reference", str(submission_payload.get("reference", "")))
         submission = SubmissionResult(**submission_payload)
         result.submission = submission
 

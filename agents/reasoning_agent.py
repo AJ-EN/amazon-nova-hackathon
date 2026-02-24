@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -15,6 +16,7 @@ from utils.bedrock_client import get_bedrock_client
 
 ICD10_PATTERN = re.compile(r"^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$")
 CPT_PATTERN = re.compile(r"^\d{5}$")
+logger = logging.getLogger(__name__)
 
 
 class ClinicalReasoningAgent:
@@ -102,7 +104,7 @@ class ClinicalReasoningAgent:
             coding_confidence=coding.confidence,
             coding_source=coding.source,
         )
-        justification = self._build_justification_with_resilience(
+        justification, extended_thinking_used = self._build_justification_with_resilience(
             extracted=extracted,
             coding=coding,
             policy=policy,
@@ -120,6 +122,7 @@ class ClinicalReasoningAgent:
             missing_documents=missing_documents,
             denial_risk_score=denial_risk_score,
             justification=justification,
+            extended_thinking_used=extended_thinking_used,
         )
 
     @staticmethod
@@ -202,7 +205,7 @@ class ClinicalReasoningAgent:
         missing: list[str],
         missing_documents: list[str],
         denial_risk_score: float,
-    ) -> str:
+    ) -> tuple[str, bool]:
         if self.use_model_justification:
             try:
                 return self._build_justification_with_nova(
@@ -229,7 +232,7 @@ class ClinicalReasoningAgent:
                 return (
                     f"{template} "
                     f"Justification fallback used due to {exc.__class__.__name__}."
-                )
+                ), False
 
         return self._build_justification(
             extracted=extracted,
@@ -238,7 +241,7 @@ class ClinicalReasoningAgent:
             meets_criteria=meets_criteria,
             satisfied=satisfied,
             missing=missing,
-        )
+        ), False
 
     def _build_justification_with_nova(
         self,
@@ -250,7 +253,7 @@ class ClinicalReasoningAgent:
         missing: list[str],
         missing_documents: list[str],
         denial_risk_score: float,
-    ) -> str:
+    ) -> tuple[str, bool]:
         self._ensure_runtime_client()
         status = "meets" if meets_criteria else "partially meets"
         satisfied_text = "; ".join(satisfied) if satisfied else "None"
@@ -289,6 +292,7 @@ class ClinicalReasoningAgent:
         }
 
         response = None
+        extended_thinking_fired = False
         if self.prefer_extended_thinking:
             extended_payload = dict(request_payload)
             extended_payload["additionalModelRequestFields"] = {
@@ -299,7 +303,12 @@ class ClinicalReasoningAgent:
             }
             try:
                 response = self._runtime_client.converse(**extended_payload)
-            except Exception:
+                extended_thinking_fired = True
+            except Exception as exc:
+                logger.warning(
+                    "Extended thinking fell back to standard inference: %s",
+                    exc,
+                )
                 response = None
 
         if response is None:
@@ -308,7 +317,7 @@ class ClinicalReasoningAgent:
         text = self._extract_text_from_converse(response)
         if not text:
             raise ValueError("Model returned empty justification text.")
-        return text
+        return text, extended_thinking_fired
 
     @staticmethod
     def _extract_text_from_converse(response: dict[str, Any]) -> str:

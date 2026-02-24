@@ -10,6 +10,10 @@ python-dotenv>=1.0.0
 # AWS multi-agent orchestration framework
 strands-agents>=0.1.0
 
+# Telemetry (OpenTelemetry tracing)
+opentelemetry-sdk>=1.28.0
+opentelemetry-exporter-otlp>=1.28.0
+
 # Browser automation for payer portal form filling (visual demo mode)
 playwright>=1.40.0
 

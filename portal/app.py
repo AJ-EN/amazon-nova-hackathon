@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import queue
 import sys
 import threading
@@ -22,8 +24,40 @@ from agents.retrieval_agent import PayerPolicyRetrievalAgent
 from agents.types import WorkflowTraceStep
 from knowledge_base.setup_kb import bootstrap_local_policy_store
 
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates")
+
+
+def _configure_otel_console_exporter() -> None:
+    """
+    Optional local OTel setup for demo visibility.
+
+    Set ENABLE_OTEL_CONSOLE=0 to disable console span export.
+    """
+    enabled = os.getenv("ENABLE_OTEL_CONSOLE", "1").lower() in {"1", "true", "yes"}
+    if not enabled:
+        return
+
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    except Exception as exc:
+        logger.warning("OpenTelemetry console export is unavailable: %s", exc)
+        return
+
+    current_provider = trace.get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        return
+
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
+    logger.info("OpenTelemetry console exporter enabled.")
+
+
+_configure_otel_console_exporter()
 
 # Stores submitted PA requests in memory for demo purposes.
 submitted_requests: list[dict[str, Any]] = []

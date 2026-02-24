@@ -63,6 +63,7 @@ class NecessityDecision:
     missing_documents: list[str]
     denial_risk_score: float
     justification: str
+    extended_thinking_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

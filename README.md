@@ -106,6 +106,8 @@ If `knowledge_base/kb_config.json` exists (from `create_bedrock_kb.py`), the ret
 
 If KB retrieval fails at runtime, the system automatically falls back to local policy retrieval and marks `retrieval_source` as `local_fallback` in workflow output.
 
+Current implementation detail: the KB provisioning script uses Titan Text Embeddings v2 (`amazon.titan-embed-text-v2:0`) to stay aligned with the Bedrock KB supported embedding model list.
+
 ### Enable Nova-backed medical justification
 
 To generate prior-auth justification prose with Nova:
@@ -118,6 +120,7 @@ python main.py
 ```
 
 `USE_NOVA_EXTENDED_THINKING=1` is enabled by default for the justification call and automatically falls back to standard inference if unsupported.
+The workflow output includes `necessity.extended_thinking_used` so demos can show whether the reasoning path actually executed.
 
 ### Browser automation mode
 
@@ -145,6 +148,7 @@ USE_BROWSER_AUTOMATION=nova_act python main.py --auto-approve
 | `USE_NOVA_JUSTIFICATION` | `0` | Enable Nova-backed justification generation |
 | `NOVA_JUSTIFICATION_MODEL_ID` | `amazon.nova-lite-v1:0` | Model for justification prose |
 | `USE_NOVA_EXTENDED_THINKING` | `1` | Enable extended thinking for justification |
+| `ENABLE_OTEL_CONSOLE` | `1` | Enable console OpenTelemetry span export for demo tracing |
 | `ORCHESTRATOR_MODE` | `strands` | Runtime orchestration mode: `strands` or `legacy` |
 
 ## Next integration steps for hackathon depth

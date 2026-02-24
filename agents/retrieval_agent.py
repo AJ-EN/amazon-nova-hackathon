@@ -15,7 +15,7 @@ class PayerPolicyRetrievalAgent:
     Dual-mode policy retrieval agent.
 
     When BEDROCK_KB_ID is set, queries the Bedrock Knowledge Base using
-    Nova Multimodal Embeddings for semantic retrieval (real RAG).
+    the KB's configured embedding model for semantic retrieval (real RAG).
     Otherwise falls back to local JSON scoring (offline development).
     """
 

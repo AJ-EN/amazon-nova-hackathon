@@ -136,6 +136,7 @@ class TestPriorAuthPipeline(unittest.TestCase):
         self.assertTrue(policy.policy_id.startswith("UHC-"))
         self.assertTrue(necessity.meets_criteria)
         self.assertLess(necessity.denial_risk_score, 0.6)
+        self.assertFalse(necessity.extended_thinking_used)
 
     def test_retrieval_agent_parses_policy_from_bedrock_kb(self) -> None:
         retrieval = PayerPolicyRetrievalAgent(

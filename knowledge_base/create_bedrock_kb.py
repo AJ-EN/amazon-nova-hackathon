@@ -1,5 +1,5 @@
 """
-Creates a Bedrock Knowledge Base backed by S3 + OpenSearch Serverless + Nova Embeddings.
+Creates a Bedrock Knowledge Base backed by S3 + OpenSearch Serverless + Titan Text Embeddings v2.
 
 Usage:
     python knowledge_base/create_bedrock_kb.py
@@ -8,7 +8,7 @@ Steps performed:
     1. Creates S3 bucket and uploads policy documents
     2. Creates IAM role for Bedrock KB
     3. Creates OpenSearch Serverless collection (vector store)
-    4. Creates Bedrock Knowledge Base with Nova Multimodal Embeddings
+    4. Creates Bedrock Knowledge Base with Titan Text Embeddings v2
     5. Creates S3 data source and starts ingestion
     6. Saves KB ID to kb_config.json
 """
@@ -28,6 +28,8 @@ ACCOUNT_ID = None  # resolved at runtime
 BUCKET_NAME = "priorauth-agent-kb-617903186897"
 KB_NAME = "priorauth-payer-policies"
 KB_DESCRIPTION = "Payer-specific prior authorization policy criteria for medical necessity evaluation."
+# Bedrock KB currently uses Titan Text Embeddings v2 in this project.
+# Keep this aligned with the Bedrock KB "supported embedding models" documentation.
 EMBEDDING_MODEL_ARN = f"arn:aws:bedrock:{REGION}::foundation-model/amazon.titan-embed-text-v2:0"
 ROLE_NAME = "PriorAuthKBBedrockRole"
 COLLECTION_NAME = "priorauth-policies"
