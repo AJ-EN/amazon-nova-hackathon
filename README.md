@@ -8,6 +8,7 @@ Voice-first prior authorization workflow that converts clinician speech into a s
 - Clinical reasoning agent that maps ICD-10/CPT codes and performs policy-criteria checks.
 - Payer policy retrieval agent with Bedrock Knowledge Base RAG (`BEDROCK_KB_ID`) and local JSON fallback.
 - Browser automation adapter that submits to the local mock payer portal (`portal/app.py`).
+- Strands-backed orchestration wrapper for runtime execution with legacy fallback.
 - End-to-end orchestrator with trace steps:
   - Voice Intake
   - Eligibility Verification
@@ -53,6 +54,7 @@ The dashboard runs workflows asynchronously and streams live step-by-step update
 - `GET /api/runs`: list recent run summaries
 - `GET /api/runs/<run_id>`: fetch full run state/result
 - `GET /api/runs/<run_id>/events`: stream live run events (SSE)
+- `POST /api/runs/<run_id>/approve`: approve and resume a run blocked at human review
 
 ## Human-in-the-loop mode
 
@@ -143,6 +145,7 @@ USE_BROWSER_AUTOMATION=nova_act python main.py --auto-approve
 | `USE_NOVA_JUSTIFICATION` | `0` | Enable Nova-backed justification generation |
 | `NOVA_JUSTIFICATION_MODEL_ID` | `amazon.nova-lite-v1:0` | Model for justification prose |
 | `USE_NOVA_EXTENDED_THINKING` | `1` | Enable extended thinking for justification |
+| `ORCHESTRATOR_MODE` | `strands` | Runtime orchestration mode: `strands` or `legacy` |
 
 ## Next integration steps for hackathon depth
 

@@ -160,6 +160,12 @@
         cursor: wait;
       }
 
+      .btn.secondary {
+        background: linear-gradient(130deg, var(--accent-2), #f28e4c);
+        color: #2d1708;
+        box-shadow: 0 8px 18px rgba(242, 142, 76, 0.28);
+      }
+
       .status {
         margin-top: 10px;
         padding: 10px 12px;
@@ -239,7 +245,8 @@
       }
 
       .trace-wrap,
-      .json-wrap {
+      .json-wrap,
+      .review-wrap {
         background: rgba(6, 20, 30, 0.84);
         border: 1px solid var(--line);
         border-radius: 10px;
@@ -247,12 +254,20 @@
       }
 
       .trace-head,
-      .json-head {
+      .json-head,
+      .review-head {
         display: flex;
         justify-content: space-between;
         align-items: center;
         padding: 10px 12px;
         border-bottom: 1px solid var(--line);
+      }
+
+      .review-actions {
+        padding: 10px 12px 12px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: flex-end;
       }
 
       .trace-table {
@@ -414,6 +429,18 @@
             </div>
           </div>
 
+          <div class="review-wrap">
+            <div class="review-head">
+              <strong>Human Review Snapshot</strong>
+            </div>
+            <pre id="reviewSnapshot">No review snapshot available.</pre>
+            <div class="review-actions">
+              <button id="approveButton" class="btn secondary" type="button" hidden>
+                Approve & Submit
+              </button>
+            </div>
+          </div>
+
           <div class="json-wrap">
             <div class="json-head">
               <strong>Structured Result</strong>
@@ -435,6 +462,8 @@
       const traceBody = document.getElementById("traceBody");
       const traceCount = document.getElementById("traceCount");
       const resultJson = document.getElementById("resultJson");
+      const reviewSnapshot = document.getElementById("reviewSnapshot");
+      const approveButton = document.getElementById("approveButton");
 
       let activeRunId = null;
       let eventSource = null;
@@ -511,6 +540,10 @@
           setStatus(`Run ${summary.id} completed with submission failure.`, "danger");
           return;
         }
+        if (submissionStatus === "needs_approval") {
+          setStatus(`Run ${summary.id} is waiting for reviewer approval.`, "warn");
+          return;
+        }
         setStatus(`Run ${summary.id} completed.`, "ok");
       }
 
@@ -522,6 +555,7 @@
         metrics.innerHTML =
           metricCard("Run ID", summary.id) +
           metricCard("Run Status", summary.run_status) +
+          metricCard("Orchestrator", summary.orchestrator_mode) +
           metricCard("Browser Mode", summary.browser_mode) +
           metricCard("Retrieval", summary.retrieval_source) +
           metricCard("Next Action", summary.next_action) +
@@ -543,6 +577,15 @@
           .join("");
         traceCount.textContent = `${trace.length} steps`;
         resultJson.textContent = JSON.stringify(result, null, 2);
+
+        const submission = result.submission || {};
+        const snapshot = String(submission.review_snapshot || "").trim();
+        reviewSnapshot.textContent = snapshot || "No review snapshot available.";
+
+        const needsApproval = String(submission.status || "").toLowerCase() === "needs_approval";
+        approveButton.hidden = !needsApproval;
+        approveButton.disabled = !needsApproval;
+        approveButton.dataset.runId = needsApproval ? String(record.id || "") : "";
       }
 
       function renderRunList(runs) {
@@ -626,6 +669,38 @@
         };
       }
 
+      async function approveRun() {
+        const runId = String(approveButton.dataset.runId || activeRunId || "");
+        if (!runId) {
+          setStatus("Select a run that is waiting for approval.", "danger");
+          return;
+        }
+
+        approveButton.disabled = true;
+        setStatus(`Submitting approval for run ${runId}...`, "warn");
+
+        try {
+          const res = await fetch(`/api/runs/${runId}/approve`, {
+            method: "POST",
+          });
+          const record = await res.json();
+          if (!res.ok) {
+            setStatus(`Approval failed: ${record.error || "Unknown error"}`, "danger");
+            approveButton.disabled = false;
+            return;
+          }
+
+          activeRunId = record.id;
+          renderRun(record);
+          applyRunBanner(record.summary || {});
+          await loadRuns();
+          openRunStream(record.id);
+        } catch (err) {
+          setStatus(`Approval failed: ${err}`, "danger");
+          approveButton.disabled = false;
+        }
+      }
+
       async function createRun() {
         const transcript = transcriptInput.value.trim();
         if (!transcript) {
@@ -668,6 +743,7 @@
       }
 
       runButton.addEventListener("click", createRun);
+      approveButton.addEventListener("click", approveRun);
       loadRuns();
     </script>
   </body>

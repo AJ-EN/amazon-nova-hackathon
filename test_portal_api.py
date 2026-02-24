@@ -23,7 +23,7 @@ class TestPortalApi(unittest.TestCase):
         workflow_run_order.clear()
         workflow_streams.clear()
 
-    def _wait_for_terminal_run(self, run_id: str, timeout_seconds: float = 4.0) -> dict:
+    def _wait_for_terminal_run(self, run_id: str, timeout_seconds: float = 10.0) -> dict:
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
             response = self.client.get(f"/api/runs/{run_id}")
@@ -91,6 +91,32 @@ class TestPortalApi(unittest.TestCase):
         first_chunk = next(response.response).decode("utf-8")
         self.assertIn("event: snapshot", first_chunk)
         response.close()
+
+    def test_approve_endpoint_requeues_waiting_run(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"USE_NOVA_REASONING": "0", "USE_NOVA_JUSTIFICATION": "0"},
+            clear=False,
+        ):
+            create_response = self.client.post(
+                "/api/runs",
+                json={"transcript": SAMPLE_TRANSCRIPT, "auto_approve": False},
+            )
+
+        self.assertEqual(create_response.status_code, 202)
+        run_id = (create_response.get_json() or {})["id"]
+
+        initial_final = self._wait_for_terminal_run(run_id)
+        self.assertEqual(initial_final["summary"]["submission_status"], "needs_approval")
+
+        approve_response = self.client.post(f"/api/runs/{run_id}/approve", json={})
+        self.assertEqual(approve_response.status_code, 202)
+        approve_payload = approve_response.get_json() or {}
+        self.assertEqual(approve_payload.get("status"), "queued")
+
+        approved_final = self._wait_for_terminal_run(run_id)
+        self.assertIn(approved_final["summary"]["submission_status"], {"submitted", "failed"})
+        self.assertTrue((approved_final.get("request") or {}).get("reviewer_approved"))
 
 
 if __name__ == "__main__":

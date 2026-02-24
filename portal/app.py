@@ -17,10 +17,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from agents.browser_agent import BrowserAutomationAgent
-from agents.orchestrator import PriorAuthOrchestrator
+from agents.orchestrator_factory import create_runtime_orchestrator, orchestrator_mode
 from agents.retrieval_agent import PayerPolicyRetrievalAgent
 from agents.types import WorkflowTraceStep
 from knowledge_base.setup_kb import bootstrap_local_policy_store
+
 
 app = Flask(__name__, template_folder="templates")
 
@@ -51,8 +52,10 @@ def _trace_duration_ms(trace: list[dict[str, Any]]) -> int | None:
     if len(trace) < 2:
         return None
     try:
-        start = datetime.fromisoformat(str(trace[0]["timestamp"]).replace("Z", "+00:00"))
-        end = datetime.fromisoformat(str(trace[-1]["timestamp"]).replace("Z", "+00:00"))
+        start = datetime.fromisoformat(
+            str(trace[0]["timestamp"]).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(
+            str(trace[-1]["timestamp"]).replace("Z", "+00:00"))
     except (ValueError, KeyError, TypeError):
         return None
     return max(int((end - start).total_seconds() * 1000), 0)
@@ -79,6 +82,7 @@ def _summarize_run(
         "submission_status": submission.get("status"),
         "submission_reference": submission.get("reference"),
         "browser_mode": result.get("browser_mode"),
+        "orchestrator_mode": result.get("orchestrator_mode"),
         "retrieval_source": result.get("retrieval_source"),
         "duration_ms": _trace_duration_ms(trace),
         "trace_steps": len(trace),
@@ -110,22 +114,29 @@ def _execute_workflow(
     transcript: str,
     auto_approve: bool,
     portal_url: str,
+    reviewer_approved: bool | None = None,
     trace_hook: Callable[[WorkflowTraceStep], None] | None = None,
 ) -> dict[str, Any]:
     bootstrap_local_policy_store(overwrite=False)
     browser_agent = BrowserAutomationAgent(portal_base_url=portal_url)
-    retrieval_agent = PayerPolicyRetrievalAgent()
-    orchestrator = PriorAuthOrchestrator(
+    retrieval_agent = (
+        PayerPolicyRetrievalAgent(kb_id="")
+        if app.config.get("TESTING")
+        else PayerPolicyRetrievalAgent()
+    )
+    orchestrator = create_runtime_orchestrator(
         browser_agent=browser_agent,
         retrieval_agent=retrieval_agent,
     )
     result = orchestrator.run(
         transcript=transcript,
         auto_approve=auto_approve,
+        reviewer_approved=reviewer_approved,
         trace_hook=trace_hook,
     )
     result_dict = result.to_dict()
     result_dict["browser_mode"] = browser_agent.browser_mode
+    result_dict["orchestrator_mode"] = orchestrator_mode(orchestrator)
     result_dict["retrieval_source"] = retrieval_agent.retrieval_source
     return result_dict
 
@@ -135,6 +146,7 @@ def _run_workflow_async(
     transcript: str,
     auto_approve: bool,
     portal_url: str,
+    reviewer_approved: bool | None = None,
 ) -> None:
     with workflow_lock:
         record = workflow_runs.get(run_id)
@@ -172,6 +184,7 @@ def _run_workflow_async(
             transcript=transcript,
             auto_approve=auto_approve,
             portal_url=portal_url,
+            reviewer_approved=reviewer_approved,
             trace_hook=trace_hook,
         )
         with workflow_lock:
@@ -249,7 +262,8 @@ def submit_pa():
         "urgency": request.form.get("urgency"),
     }
     submitted_requests.append(data)
-    print(f"PA Request received: {data['patient_name']} - {data['procedure_code']}")
+    print(
+        f"PA Request received: {data['patient_name']} - {data['procedure_code']}")
     return jsonify({"status": "submitted", "reference": f"PA-{len(submitted_requests):04d}"})
 
 
@@ -265,7 +279,8 @@ def list_runs():
     limit = max(1, min(limit, 100))
     with workflow_lock:
         run_ids = list(reversed(workflow_run_order[-limit:]))
-        summaries = [deepcopy(workflow_runs[run_id]["summary"]) for run_id in run_ids if run_id in workflow_runs]
+        summaries = [deepcopy(workflow_runs[run_id]["summary"])
+                     for run_id in run_ids if run_id in workflow_runs]
     return jsonify({"runs": summaries, "count": len(summaries)})
 
 
@@ -331,7 +346,8 @@ def create_run():
         return jsonify({"error": "transcript_required"}), 400
 
     auto_approve = bool(body.get("auto_approve", False))
-    portal_url = str(body.get("portal_url", "")).strip() or request.host_url.rstrip("/")
+    portal_url = str(body.get("portal_url", "")
+                     ).strip() or request.host_url.rstrip("/")
 
     run_id = uuid.uuid4().hex[:12]
     created_at = _utc_now_iso()
@@ -345,6 +361,7 @@ def create_run():
             "transcript": transcript,
             "auto_approve": auto_approve,
             "portal_url": portal_url,
+            "reviewer_approved": None,
         },
         "result": {"trace": []},
         "summary": _summarize_run(
@@ -370,6 +387,7 @@ def create_run():
             "transcript": transcript,
             "auto_approve": auto_approve,
             "portal_url": portal_url,
+            "reviewer_approved": None,
         },
         daemon=True,
     )
@@ -377,6 +395,69 @@ def create_run():
     _publish_event(run_id, "run_queued")
 
     return jsonify(record), 202
+
+
+@app.route("/api/runs/<run_id>/approve", methods=["POST"])
+def approve_run(run_id: str):
+    with workflow_lock:
+        record = workflow_runs.get(run_id)
+        if record is None:
+            return jsonify({"error": "run_not_found"}), 404
+
+        run_status = str(record.get("status", ""))
+        if run_status == "running":
+            return jsonify({"error": "run_in_progress"}), 409
+
+        result = record.get("result") or {}
+        submission = result.get("submission") or {}
+        submission_status = str(submission.get("status", "")).lower()
+        if submission_status != "needs_approval":
+            return (
+                jsonify(
+                    {
+                        "error": "run_not_waiting_for_approval",
+                        "submission_status": submission_status or None,
+                    }
+                ),
+                409,
+            )
+
+        req = record.setdefault("request", {})
+        transcript = str(req.get("transcript", "")).strip()
+        if not transcript:
+            return jsonify({"error": "transcript_missing_for_approval"}), 400
+
+        portal_url = str(req.get("portal_url", "")
+                         ).strip() or request.host_url.rstrip("/")
+        auto_approve = bool(req.get("auto_approve", False))
+        req["reviewer_approved"] = True
+
+        record["status"] = "queued"
+        record["error"] = None
+        record["updated_at"] = _utc_now_iso()
+        record["result"] = {"trace": []}
+        record["summary"] = _summarize_run(
+            run_id=run_id,
+            result=record["result"],
+            run_status="queued",
+            error=None,
+        )
+        response_payload = deepcopy(record)
+
+    worker = threading.Thread(
+        target=_run_workflow_async,
+        kwargs={
+            "run_id": run_id,
+            "transcript": transcript,
+            "auto_approve": auto_approve,
+            "portal_url": portal_url,
+            "reviewer_approved": True,
+        },
+        daemon=True,
+    )
+    worker.start()
+    _publish_event(run_id, "run_queued")
+    return jsonify(response_payload), 202
 
 
 @app.route("/health")
