@@ -42,3 +42,6 @@ pip-wheel-metadata/
 .DS_Store
 .vscode/
 .idea/
+
+# Local Bedrock KB config (contains environment-specific resource IDs)
+knowledge_base/kb_config.json

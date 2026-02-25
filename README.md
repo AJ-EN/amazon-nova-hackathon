@@ -25,6 +25,28 @@ Judge-facing architecture documentation (components, sequence, Nova/Bedrock inte
   - Human Review
   - Portal Submission
 
+## Bedrock KB configuration
+
+You can enable Bedrock Knowledge Base retrieval in either of these ways:
+
+1. File-based config (recommended for local development):
+```bash
+cp knowledge_base/kb_config.example.json knowledge_base/kb_config.json
+# edit knowledge_base/kb_config.json and set knowledge_base_id
+```
+
+2. Environment variable:
+```bash
+export BEDROCK_KB_ID=<your-kb-id>
+```
+
+If you need to provision a KB first, run:
+```bash
+python knowledge_base/create_bedrock_kb.py
+```
+
+For quick local/offline runs, no AWS setup is required. The retrieval agent automatically falls back to local policy JSON when KB config is missing or unavailable.
+
 ## Run locally
 
 1. Install dependencies:
