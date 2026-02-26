@@ -33,7 +33,7 @@ class BrowserAutomationAgent:
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max_attempts
 
-        mode = os.getenv("USE_BROWSER_AUTOMATION", "0").lower().strip()
+        mode = os.getenv("USE_BROWSER_AUTOMATION", "playwright").lower().strip()
         if mode in {"playwright", "pw"}:
             self.browser_mode = "playwright"
         elif mode in {"nova_act", "nova", "1", "true", "yes"}:

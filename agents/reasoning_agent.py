@@ -36,7 +36,7 @@ class ClinicalReasoningAgent:
         prefer_extended_thinking: bool | None = None,
         require_model_success: bool = False,
     ) -> None:
-        env_toggle = os.getenv("USE_NOVA_REASONING", "0").lower() in {"1", "true", "yes"}
+        env_toggle = os.getenv("USE_NOVA_REASONING", "1").lower() in {"1", "true", "yes"}
         self.use_model = env_toggle if use_model is None else use_model
         self.model_id = model_id or os.getenv("NOVA_REASONING_MODEL_ID", "amazon.nova-lite-v1:0")
         justification_env_default = "1" if self.use_model else "0"

@@ -416,8 +416,7 @@ def submit_pa():
     with workflow_lock:
         submitted_requests.append(data)
         reference = f"PA-{len(submitted_requests):04d}"
-    print(
-        f"PA Request received: {data['patient_name']} - {data['procedure_code']}")
+        print(f"PA Request received: {data['patient_name']} - {data['procedure_code']}")
     return jsonify({"status": "submitted", "reference": reference})
 
 
@@ -617,6 +616,61 @@ def approve_run(run_id: str):
     worker.start()
     _publish_event(run_id, "run_queued")
     return jsonify(response_payload), 202
+
+
+@app.route("/api/transcribe", methods=["POST"])
+def transcribe():
+    """
+    Nova 2 Sonic speech-to-text gateway.
+
+    Accepts either:
+      - JSON body with ``audio_b64`` (base64-encoded PCM/WAV bytes) for real Sonic calls
+      - JSON body with ``mock_transcript`` (plain text) for demo / offline mode
+
+    Returns the transcript and the source used ("nova_sonic" or "mock").
+    The returned transcript can be fed directly into POST /api/runs as the
+    ``transcript`` field to complete the voice → PA pipeline.
+
+    Enable real Sonic calls: set USE_NOVA_SONIC=1 and ensure AWS credentials
+    have access to amazon.nova-sonic-v1:0 in us-east-1.
+    """
+    body = request.get_json(silent=True) or {}
+    mock_transcript = str(body.get("mock_transcript", "")).strip()
+    audio_b64 = str(body.get("audio_b64", "")).strip()
+
+    use_sonic = os.getenv("USE_NOVA_SONIC", "0").lower() in {"1", "true", "yes"}
+
+    if use_sonic and audio_b64:
+        try:
+            import base64
+
+            import boto3
+
+            audio_bytes = base64.b64decode(audio_b64)
+            bedrock = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+
+            response = bedrock.invoke_model(
+                modelId="amazon.nova-sonic-v1:0",
+                body=audio_bytes,
+                contentType="audio/wav",
+                accept="application/json",
+            )
+            result = response["body"].read()
+            import json as _json
+            sonic_out = _json.loads(result)
+            transcript = str(sonic_out.get("transcript", "")).strip()
+            if not transcript:
+                raise ValueError("Nova Sonic returned empty transcript")
+            return jsonify({"transcript": transcript, "source": "nova_sonic"})
+        except Exception as exc:
+            logger.warning("Nova Sonic call failed, falling back to mock: %s", exc)
+            if not mock_transcript:
+                return jsonify({"error": f"Nova Sonic failed and no mock_transcript provided: {exc}"}), 502
+
+    if mock_transcript:
+        return jsonify({"transcript": mock_transcript, "source": "mock"})
+
+    return jsonify({"error": "Provide audio_b64 (with USE_NOVA_SONIC=1) or mock_transcript"}), 400
 
 
 @app.route("/health")

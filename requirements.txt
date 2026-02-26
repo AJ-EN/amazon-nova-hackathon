@@ -1,30 +1,30 @@
 # AWS SDK
-boto3>=1.35.0
+boto3>=1.35.0,<2.0.0
 
 # Mock payer portal web server
-flask>=3.0.0
+flask>=3.0.0,<4.0.0
 
 # Non-credential environment configuration
-python-dotenv>=1.0.0
+python-dotenv>=1.0.0,<2.0.0
 
 # AWS multi-agent orchestration framework
-strands-agents>=0.1.0
+strands-agents>=0.1.0,<1.0.0
 
 # Telemetry (OpenTelemetry tracing)
-opentelemetry-sdk>=1.28.0
-opentelemetry-exporter-otlp>=1.28.0
+opentelemetry-sdk>=1.28.0,<2.0.0
+opentelemetry-exporter-otlp>=1.28.0,<2.0.0
 
 # Browser automation for payer portal form filling (visual demo mode)
-playwright>=1.40.0
+playwright>=1.40.0,<2.0.0
 
 # HTTP requests utility
-requests>=2.31.0
+requests>=2.31.0,<3.0.0
 
 # OpenSearch client for Bedrock KB vector index setup
-opensearch-py>=2.4.0
+opensearch-py>=2.4.0,<3.0.0
 
 # AWS SigV4 auth for OpenSearch Serverless
-requests-aws4auth>=1.2.0
+requests-aws4auth>=1.2.0,<2.0.0
 
 # --- Optional (not installed by default) ---
 # nova-act>=0.1.0        # Nova Act browser automation (requires API key)
