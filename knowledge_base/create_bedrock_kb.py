@@ -16,6 +16,7 @@ Steps performed:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,7 +26,7 @@ from botocore.exceptions import ClientError
 
 REGION = "us-east-1"
 ACCOUNT_ID = None  # resolved at runtime
-BUCKET_NAME = "priorauth-agent-kb-617903186897"
+BUCKET_NAME = os.getenv("PA_KB_BUCKET", "").strip()
 KB_NAME = "priorauth-payer-policies"
 KB_DESCRIPTION = "Payer-specific prior authorization policy criteria for medical necessity evaluation."
 # Bedrock KB currently uses Titan Text Embeddings v2 in this project.
@@ -38,6 +39,28 @@ POLICY_DOCS_DIR = Path(__file__).resolve().parent / "policy_docs"
 CONFIG_PATH = Path(__file__).resolve().parent / "kb_config.json"
 
 
+def _resolved_bucket_name() -> str:
+    if BUCKET_NAME:
+        return BUCKET_NAME
+    account_id = ACCOUNT_ID or get_account_id()
+    return f"priorauth-agent-kb-{account_id}"
+
+
+def _access_policy_principals() -> list[str]:
+    account_id = ACCOUNT_ID or get_account_id()
+    configured = os.getenv("PA_KB_ACCESS_PRINCIPAL", "").strip()
+    principals = [f"arn:aws:iam::{account_id}:role/{ROLE_NAME}"]
+    if configured:
+        principals.extend(
+            principal.strip()
+            for principal in configured.split(",")
+            if principal.strip()
+        )
+    else:
+        principals.append(f"arn:aws:iam::{account_id}:root")
+    return principals
+
+
 def get_account_id() -> str:
     global ACCOUNT_ID
     sts = boto3.client("sts", region_name=REGION)
@@ -48,24 +71,26 @@ def get_account_id() -> str:
 # ── S3 ──────────────────────────────────────────────────────────────
 
 def create_s3_bucket(s3) -> None:
+    bucket_name = _resolved_bucket_name()
     try:
-        s3.head_bucket(Bucket=BUCKET_NAME)
-        print(f"[S3] Bucket exists: {BUCKET_NAME}")
+        s3.head_bucket(Bucket=bucket_name)
+        print(f"[S3] Bucket exists: {bucket_name}")
     except ClientError:
-        print(f"[S3] Creating bucket: {BUCKET_NAME}")
-        params = {"Bucket": BUCKET_NAME}
+        print(f"[S3] Creating bucket: {bucket_name}")
+        params = {"Bucket": bucket_name}
         if REGION != "us-east-1":
             params["CreateBucketConfiguration"] = {"LocationConstraint": REGION}
         s3.create_bucket(**params)
-        print(f"[S3] Created: {BUCKET_NAME}")
+        print(f"[S3] Created: {bucket_name}")
 
 
 def upload_policy_docs(s3) -> int:
+    bucket_name = _resolved_bucket_name()
     count = 0
     for doc_path in sorted(POLICY_DOCS_DIR.glob("*.txt")):
         key = f"policies/{doc_path.name}"
-        s3.upload_file(str(doc_path), BUCKET_NAME, key)
-        print(f"  Uploaded: s3://{BUCKET_NAME}/{key}")
+        s3.upload_file(str(doc_path), bucket_name, key)
+        print(f"  Uploaded: s3://{bucket_name}/{key}")
         count += 1
     return count
 
@@ -110,8 +135,8 @@ def create_iam_role(iam) -> str:
                 "Effect": "Allow",
                 "Action": ["s3:GetObject", "s3:ListBucket"],
                 "Resource": [
-                    f"arn:aws:s3:::{BUCKET_NAME}",
-                    f"arn:aws:s3:::{BUCKET_NAME}/*",
+                    f"arn:aws:s3:::{_resolved_bucket_name()}",
+                    f"arn:aws:s3:::{_resolved_bucket_name()}/*",
                 ],
             },
             {
@@ -252,10 +277,7 @@ def create_opensearch_collection(aoss) -> str:
                                     "ResourceType": "index",
                                 },
                             ],
-                            "Principal": [
-                                f"arn:aws:iam::{ACCOUNT_ID}:role/{ROLE_NAME}",
-                                f"arn:aws:iam::{ACCOUNT_ID}:user/nova-hackathon-ayush",
-                            ],
+                            "Principal": _access_policy_principals(),
                         }
                     ]),
                 )
@@ -411,6 +433,7 @@ def create_knowledge_base(bedrock_agent, role_arn: str, collection_arn: str) -> 
 
 
 def create_data_source_and_ingest(bedrock_agent, kb_id: str) -> None:
+    bucket_name = _resolved_bucket_name()
     existing = bedrock_agent.list_data_sources(knowledgeBaseId=kb_id, maxResults=10)
     ds_id = None
     for ds in existing.get("dataSourceSummaries", []):
@@ -428,7 +451,7 @@ def create_data_source_and_ingest(bedrock_agent, kb_id: str) -> None:
             dataSourceConfiguration={
                 "type": "S3",
                 "s3Configuration": {
-                    "bucketArn": f"arn:aws:s3:::{BUCKET_NAME}",
+                    "bucketArn": f"arn:aws:s3:::{bucket_name}",
                     "inclusionPrefixes": ["policies/"],
                 },
             },

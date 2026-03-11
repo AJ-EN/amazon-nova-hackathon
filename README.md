@@ -16,7 +16,7 @@ Judge-facing architecture documentation (components, sequence, Nova/Bedrock inte
 - Payer policy retrieval agent with Bedrock Knowledge Base RAG (`BEDROCK_KB_ID`) and local JSON fallback.
 - **Playwright browser automation** (default) that launches a visible Chromium browser and fills the mock payer portal field-by-field; Nova Act path available when API key is present.
 - Strands-backed orchestration wrapper for runtime execution with legacy fallback.
-- **Nova 2 Sonic gateway** (`POST /api/transcribe`) — sends audio to Sonic and pipes transcript into the pipeline; falls back to `mock_transcript` text when `USE_NOVA_SONIC` is not set.
+- **Nova 2 Sonic demo gateway** (`POST /api/transcribe`) — accepts demo audio/transcript input and maps into the pipeline entry point; mock transcript mode is used for the demo and the production target is `amazon.nova-sonic-v1:0`.
 - End-to-end orchestrator with trace steps:
   - Voice Intake
   - Eligibility Verification
@@ -118,7 +118,7 @@ The workflow returns `next_action: "human_review_required"` and includes a revie
 
 ## Nova 2 Sonic voice gateway
 
-The `/api/transcribe` endpoint bridges audio input to the PA pipeline.
+The `/api/transcribe` endpoint is a demo gateway that bridges audio input to the PA pipeline.
 
 **Demo mode** (no Sonic key required):
 ```bash
@@ -127,13 +127,15 @@ curl -s -X POST http://127.0.0.1:5000/api/transcribe \
   -d '{"mock_transcript": "I need a prior auth for Jane Doe..."}'
 ```
 
-**Real Sonic mode** (requires Bedrock access to `amazon.nova-sonic-v1:0`):
+**Production-target Sonic mode** (requires Bedrock access to `amazon.nova-sonic-v1:0`):
 
 ```bash
 export USE_NOVA_SONIC=1
 # POST audio_b64 (base64-encoded WAV bytes) to /api/transcribe
 # The returned transcript feeds directly into POST /api/runs
 ```
+
+Full Nova 2 Sonic bidirectional streaming remains a next integration step for production.
 
 ## Tests
 

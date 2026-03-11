@@ -21,7 +21,7 @@ if str(ROOT_DIR) not in sys.path:
 from agents.browser_agent import BrowserAutomationAgent
 from agents.orchestrator_factory import create_runtime_orchestrator, orchestrator_mode
 from agents.retrieval_agent import PayerPolicyRetrievalAgent
-from agents.types import WorkflowTraceStep
+from agents.types import SubmissionResult, WorkflowTraceStep
 from knowledge_base.setup_kb import bootstrap_local_policy_store
 
 logger = logging.getLogger(__name__)
@@ -298,12 +298,35 @@ def _run_cached_submission_async(
             ),
         )
 
-        browser_agent = BrowserAutomationAgent(portal_base_url=portal_url)
-        submission = browser_agent.submit(
-            payload=payload,
-            approved=True,
-            review_snapshot=review_snapshot,
-        )
+        browser_mode = "http_adapter"
+        if app.config.get("TESTING"):
+            with app.test_client() as client:
+                response = client.post("/submit", data=payload)
+            if response.status_code >= 400:
+                submission = SubmissionResult(
+                    status="failed",
+                    message=f"Cached submission failed with status {response.status_code}.",
+                    reference="",
+                    review_snapshot=review_snapshot,
+                    payload=payload,
+                )
+            else:
+                body = response.get_json(silent=True) or {}
+                submission = SubmissionResult(
+                    status=str(body.get("status", "submitted")),
+                    message="Prior authorization submitted via in-process test client.",
+                    reference=str(body.get("reference", "")),
+                    review_snapshot=review_snapshot,
+                    payload=payload,
+                )
+        else:
+            browser_agent = BrowserAutomationAgent(portal_base_url=portal_url)
+            browser_mode = browser_agent.browser_mode
+            submission = browser_agent.submit(
+                payload=payload,
+                approved=True,
+                review_snapshot=review_snapshot,
+            )
 
         if submission.status == "submitted":
             _record_trace_step(
@@ -342,7 +365,7 @@ def _run_cached_submission_async(
                 return
             result = record.setdefault("result", {"trace": []})
             result["submission"] = submission.to_dict()
-            result["browser_mode"] = browser_agent.browser_mode
+            result["browser_mode"] = browser_mode
             result["next_action"] = next_action
             record["status"] = "completed"
             record["updated_at"] = _utc_now_iso()
@@ -621,10 +644,10 @@ def approve_run(run_id: str):
 @app.route("/api/transcribe", methods=["POST"])
 def transcribe():
     """
-    Nova 2 Sonic speech-to-text gateway.
+    Nova 2 Sonic demo speech-to-text gateway.
 
     Accepts either:
-      - JSON body with ``audio_b64`` (base64-encoded PCM/WAV bytes) for real Sonic calls
+      - JSON body with ``audio_b64`` (base64-encoded PCM/WAV bytes) for the Bedrock-targeted path
       - JSON body with ``mock_transcript`` (plain text) for demo / offline mode
 
     Returns the transcript and the source used ("nova_sonic" or "mock").
@@ -633,6 +656,8 @@ def transcribe():
 
     Enable real Sonic calls: set USE_NOVA_SONIC=1 and ensure AWS credentials
     have access to amazon.nova-sonic-v1:0 in us-east-1.
+
+    Full bidirectional Sonic streaming is a planned production integration.
     """
     body = request.get_json(silent=True) or {}
     mock_transcript = str(body.get("mock_transcript", "")).strip()

@@ -44,90 +44,102 @@ class TestPortalApi(unittest.TestCase):
     def test_create_and_fetch_workflow_run(self) -> None:
         with patch.dict(
             os.environ,
-            {"USE_NOVA_REASONING": "0", "USE_NOVA_JUSTIFICATION": "0"},
+            {
+                "USE_NOVA_REASONING": "0",
+                "USE_NOVA_JUSTIFICATION": "0",
+                "USE_BROWSER_AUTOMATION": "0",
+                "ENABLE_OTEL_CONSOLE": "0",
+            },
             clear=False,
         ):
             create_response = self.client.post(
                 "/api/runs",
                 json={"transcript": SAMPLE_TRANSCRIPT, "auto_approve": False},
             )
+            self.assertEqual(create_response.status_code, 202)
+            payload = create_response.get_json()
+            self.assertIsNotNone(payload)
+            assert payload is not None
+            run_id = payload["id"]
+            self.assertIn(payload["summary"]["run_status"], {"queued", "running", "completed"})
 
-        self.assertEqual(create_response.status_code, 202)
-        payload = create_response.get_json()
-        self.assertIsNotNone(payload)
-        assert payload is not None
-        run_id = payload["id"]
-        self.assertIn(payload["summary"]["run_status"], {"queued", "running", "completed"})
+            final_payload = self._wait_for_terminal_run(run_id)
+            self.assertEqual(final_payload["status"], "completed")
+            self.assertEqual(final_payload["summary"]["next_action"], "human_review_required")
+            self.assertEqual(final_payload["summary"]["submission_status"], "needs_approval")
 
-        final_payload = self._wait_for_terminal_run(run_id)
-        self.assertEqual(final_payload["status"], "completed")
-        self.assertEqual(final_payload["summary"]["next_action"], "human_review_required")
-        self.assertEqual(final_payload["summary"]["submission_status"], "needs_approval")
+            detail_payload = self.client.get(f"/api/runs/{run_id}").get_json() or {}
+            self.assertEqual(detail_payload["id"], run_id)
 
-        detail_payload = self.client.get(f"/api/runs/{run_id}").get_json() or {}
-        self.assertEqual(detail_payload["id"], run_id)
-
-        list_response = self.client.get("/api/runs?limit=5")
-        self.assertEqual(list_response.status_code, 200)
-        list_payload = list_response.get_json()
-        self.assertIsNotNone(list_payload)
-        assert list_payload is not None
-        self.assertGreaterEqual(list_payload["count"], 1)
+            list_response = self.client.get("/api/runs?limit=5")
+            self.assertEqual(list_response.status_code, 200)
+            list_payload = list_response.get_json()
+            self.assertIsNotNone(list_payload)
+            assert list_payload is not None
+            self.assertGreaterEqual(list_payload["count"], 1)
 
     def test_events_endpoint_streams_snapshot(self) -> None:
         with patch.dict(
             os.environ,
-            {"USE_NOVA_REASONING": "0", "USE_NOVA_JUSTIFICATION": "0"},
+            {
+                "USE_NOVA_REASONING": "0",
+                "USE_NOVA_JUSTIFICATION": "0",
+                "USE_BROWSER_AUTOMATION": "0",
+                "ENABLE_OTEL_CONSOLE": "0",
+            },
             clear=False,
         ):
             create_response = self.client.post(
                 "/api/runs",
                 json={"transcript": SAMPLE_TRANSCRIPT, "auto_approve": False},
             )
-
-        run_id = (create_response.get_json() or {})["id"]
-        response = self.client.get(f"/api/runs/{run_id}/events", buffered=False)
-        self.assertEqual(response.status_code, 200)
-        first_chunk = next(response.response).decode("utf-8")
-        self.assertIn("event: snapshot", first_chunk)
-        response.close()
+            run_id = (create_response.get_json() or {})["id"]
+            response = self.client.get(f"/api/runs/{run_id}/events", buffered=False)
+            self.assertEqual(response.status_code, 200)
+            first_chunk = next(response.response).decode("utf-8")
+            self.assertIn("event: snapshot", first_chunk)
+            response.close()
 
     def test_approve_endpoint_requeues_waiting_run(self) -> None:
         with patch.dict(
             os.environ,
-            {"USE_NOVA_REASONING": "0", "USE_NOVA_JUSTIFICATION": "0"},
+            {
+                "USE_NOVA_REASONING": "0",
+                "USE_NOVA_JUSTIFICATION": "0",
+                "USE_BROWSER_AUTOMATION": "0",
+                "ENABLE_OTEL_CONSOLE": "0",
+            },
             clear=False,
         ):
             create_response = self.client.post(
                 "/api/runs",
                 json={"transcript": SAMPLE_TRANSCRIPT, "auto_approve": False},
             )
+            self.assertEqual(create_response.status_code, 202)
+            run_id = (create_response.get_json() or {})["id"]
 
-        self.assertEqual(create_response.status_code, 202)
-        run_id = (create_response.get_json() or {})["id"]
+            initial_final = self._wait_for_terminal_run(run_id)
+            self.assertEqual(initial_final["summary"]["submission_status"], "needs_approval")
+            initial_trace = (initial_final.get("result") or {}).get("trace") or []
+            initial_voice_intake_count = sum(
+                1 for step in initial_trace if step.get("step") == "Voice Intake"
+            )
 
-        initial_final = self._wait_for_terminal_run(run_id)
-        self.assertEqual(initial_final["summary"]["submission_status"], "needs_approval")
-        initial_trace = (initial_final.get("result") or {}).get("trace") or []
-        initial_voice_intake_count = sum(
-            1 for step in initial_trace if step.get("step") == "Voice Intake"
-        )
+            approve_response = self.client.post(f"/api/runs/{run_id}/approve", json={})
+            self.assertEqual(approve_response.status_code, 202)
+            approve_payload = approve_response.get_json() or {}
+            self.assertEqual(approve_payload.get("status"), "queued")
 
-        approve_response = self.client.post(f"/api/runs/{run_id}/approve", json={})
-        self.assertEqual(approve_response.status_code, 202)
-        approve_payload = approve_response.get_json() or {}
-        self.assertEqual(approve_payload.get("status"), "queued")
-
-        approved_final = self._wait_for_terminal_run(run_id)
-        self.assertIn(approved_final["summary"]["submission_status"], {"submitted", "failed"})
-        self.assertTrue((approved_final.get("request") or {}).get("reviewer_approved"))
-        approved_trace = (approved_final.get("result") or {}).get("trace") or []
-        approved_voice_intake_count = sum(
-            1 for step in approved_trace if step.get("step") == "Voice Intake"
-        )
-        self.assertEqual(approved_voice_intake_count, initial_voice_intake_count)
-        self.assertGreaterEqual(len(approved_trace), len(initial_trace) + 2)
-        self.assertLessEqual(len(approved_trace), len(initial_trace) + 4)
+            approved_final = self._wait_for_terminal_run(run_id)
+            self.assertEqual(approved_final["summary"]["submission_status"], "submitted")
+            self.assertTrue((approved_final.get("request") or {}).get("reviewer_approved"))
+            approved_trace = (approved_final.get("result") or {}).get("trace") or []
+            approved_voice_intake_count = sum(
+                1 for step in approved_trace if step.get("step") == "Voice Intake"
+            )
+            self.assertEqual(approved_voice_intake_count, initial_voice_intake_count)
+            self.assertGreaterEqual(len(approved_trace), len(initial_trace) + 2)
+            self.assertLessEqual(len(approved_trace), len(initial_trace) + 4)
 
 
 if __name__ == "__main__":
